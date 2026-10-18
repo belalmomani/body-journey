@@ -1,1 +1,86 @@
 
+name: android-apk
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: barichello/godot-ci:4.3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Locate Godot project
+        id: p
+        run: |
+          f=$(find . -name project.godot -not -path "./.godot/*" | head -1)
+          if [ -z "$f" ]; then echo "project.godot not found"; exit 1; fi
+          echo "dir=$(dirname "$f")" >> "$GITHUB_OUTPUT"
+      - name: Setup Godot (templates + Android settings)
+        run: |
+          V="${GODOT_VERSION:-4.3}"
+          mkdir -p ~/.config/godot ~/.local/share/godot/export_templates
+          cp -r /root/.config/godot/. ~/.config/godot/ 2>/dev/null || true
+          mv /root/.local/share/godot/export_templates/${V}.stable ~/.local/share/godot/export_templates/ 2>/dev/null || true
+          ls ~/.local/share/godot/export_templates ~/.config/godot || true
+          ls /root/debug.keystore || echo "NO debug.keystore in image"
+      - name: Create export preset
+        working-directory: ${{ steps.p.outputs.dir }}
+        run: |
+          cat > export_presets.cfg <<'EOF2'
+          [preset.0]
+
+          name="Android"
+          platform="Android"
+          runnable=true
+          advanced_options=false
+          dedicated_server=false
+          custom_features=""
+          export_filter="all_resources"
+          include_filter="data/*,config/*.json"
+          exclude_filter="tests/*,docs/*,firebase/*,.github/*"
+          export_path="build/android/body-journey-debug.apk"
+          encryption_include_filters=""
+          encryption_exclude_filters=""
+          encrypt_pck=false
+          encrypt_directory=false
+
+          [preset.0.options]
+
+          custom_template/debug=""
+          custom_template/release=""
+          gradle_build/use_gradle_build=false
+          architectures/armeabi-v7a=true
+          architectures/arm64-v8a=true
+          architectures/x86=false
+          architectures/x86_64=false
+          version/code=1
+          version/name="1.0"
+          package/unique_name="com.belalmomani.bodyjourney"
+          package/name="Body Journey"
+          package/signed=true
+          package/app_category=2
+          package/retain_data_on_uninstall=false
+          package/exclude_from_recents=false
+          screen/immersive_mode=true
+          screen/support_small=true
+          screen/support_normal=true
+          screen/support_large=true
+          screen/support_xlarge=true
+          permissions/internet=true
+          keystore/debug="/root/debug.keystore"
+          keystore/debug_user="androiddebugkey"
+          keystore/debug_password="android"
+          EOF2
+      - name: Import project
+        working-directory: ${{ steps.p.outputs.dir }}
+        run: godot --headless --import || true
+      - name: Export debug APK
+        working-directory: ${{ steps.p.outputs.dir }}
+        run: |
+          mkdir -p build/android
+          godot --headless --verbose --export-debug "Android" build/android/body-journey-debug.apk
+          ls -la build/android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: body-journey-debug-apk
+          path: "**/build/android/*.apk"
