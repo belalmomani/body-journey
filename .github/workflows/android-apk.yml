@@ -22,6 +22,8 @@ jobs:
           mv /root/.local/share/godot/export_templates/${V}.stable ~/.local/share/godot/export_templates/ 2>/dev/null || true
           ls ~/.local/share/godot/export_templates ~/.config/godot || true
           ls /root/debug.keystore || echo "NO debug.keystore in image"
+          echo "--- templates"; ls -la ~/.local/share/godot/export_templates/${V}.stable | head -40; cat ~/.local/share/godot/export_templates/${V}.stable/version.txt || echo "NO version.txt"
+          ls ~/.local/share/godot/export_templates/${V}.stable/android* 2>/dev/null || echo "NO android templates found"
           grep -i "android\|java" ~/.config/godot/editor_settings-4.3.tres || echo "no android keys in editor settings"
           ls /usr/lib/android-sdk /usr/lib/android-sdk/build-tools 2>/dev/null || true
       - name: Install Android build-tools 34
