@@ -94,6 +94,11 @@ jobs:
           keystore/debug_user="androiddebugkey"
           keystore/debug_password="android"
           EOF2
+      - name: Enable ETC2/ASTC textures (required for Android)
+        working-directory: ${{ steps.p.outputs.dir }}
+        run: |
+          grep -q "import_etc2_astc" project.godot || sed -i '/^\[rendering\]/a textures/vram_compression/import_etc2_astc=true' project.godot
+          sed -n '/\[rendering\]/,$p' project.godot
       - name: Import project
         working-directory: ${{ steps.p.outputs.dir }}
         run: godot --headless --import || true
