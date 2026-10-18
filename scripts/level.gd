@@ -24,6 +24,8 @@ func _ready() -> void:
 	layout_direction = Control.LAYOUT_DIRECTION_RTL
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	lv = GameState.levels.get(GameState.selected_level, {})
+	if lv.is_empty():
+		lv = _fallback()
 	rng.seed = GameState.selected_level * 7919
 	var bg := TextureRect.new()
 	bg.texture = load(lv.get("background", "res://assets/backgrounds/bg_default.svg"))
@@ -43,6 +45,14 @@ func _ready() -> void:
 		tr.size = Vector2(110, 110)
 		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var halo := TextureRect.new()
+		halo.texture = tex_item
+		halo.size = Vector2(170, 170)
+		halo.position = Vector2(-30, -30)
+		halo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		halo.modulate = Color(1, 0.9, 0.2, 0.35)
+		halo.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		n.add_child(halo)
 		n.add_child(tr)
 		var l := UI.label(nm, 22)
 		l.size = Vector2(170, 30)
@@ -50,7 +60,7 @@ func _ready() -> void:
 		n.add_child(l)
 		n.position = _free_spot() - n.size / 2
 		add_child(n)
-		items.append({"node": n, "name": nm, "got": false})
+		items.append({"node": n, "name": nm, "got": false, "halo": halo})
 	var tex_h = load("res://assets/characters/germ.svg")
 	for i in int(lv.get("hazards", 2)):
 		var h := TextureRect.new()
@@ -179,6 +189,7 @@ func _process(delta: float) -> void:
 	for it in items:
 		if not it["got"]:
 			all = false
+			it["halo"].modulate.a = 0.3 + 0.2 * sin(t * 5.0)
 			if (it["node"].position + Vector2(55, 55)).distance_to(ppos) < 85.0:
 				it["got"] = true; it["node"].visible = false
 				score += 100; GameState.sfx("collect"); _update_hud()
@@ -345,3 +356,12 @@ func _sort_next(p: Dictionary, its: Array, i: Array) -> void:
 			else:
 				_wrong()
 		v.add_child(UI.button(p["bins"][k], cb, Color("#6c63ff")))
+
+func _fallback() -> Dictionary:
+	# يُستخدم فقط إذا تعذّر تحميل ملف JSON للمرحلة (مثلاً لم يُصدَّر مع الـAPK).
+	return {"id": GameState.selected_level, "title": "الخلية", "color": "#7fd6c2",
+		"background": "res://assets/backgrounds/bg_default.svg",
+		"intro": "اجمع العناصر المضيئة، وابتعد عن الجراثيم، ثم أجب عن السؤال.",
+		"dialogue": "أهلاً! أنا نبض، مرشدك داخل الجسم.",
+		"items": ["النواة", "الميتوكوندريا", "الريبوسوم", "الغشاء"], "hazards": 2, "difficulty": 1,
+		"questions": [{"q": "أي جزء هو مركز التحكم في الخلية؟", "answer": "النواة", "wrong": ["الغشاء", "الماء"]}]}
