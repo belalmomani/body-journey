@@ -19,5 +19,5 @@ func show_interstitial(on_closed: Callable) -> void:
 		on_closed.call(); return
 	p.showInterstitial()
 	# يُفترض أن الإضافة ترسل إشارة إغلاق؛ هذا مؤقّت أمان كي لا يتجمد اللعب.
-	var t := Engine.get_main_loop().create_timer(1.0)
+	var t: SceneTreeTimer = (Engine.get_main_loop() as SceneTree).create_timer(1.0)
 	t.timeout.connect(on_closed)

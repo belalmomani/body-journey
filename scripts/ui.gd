@@ -38,7 +38,7 @@ static func button(text: String, cb: Callable, color := Color("#ff7a59")) -> But
 	sb.set_corner_radius_all(28)
 	for st in ["normal", "hover", "pressed", "focus"]:
 		b.add_theme_stylebox_override(st, sb)
-	var dis := sb.duplicate()
+	var dis: StyleBoxFlat = sb.duplicate() as StyleBoxFlat
 	dis.bg_color = Color("#b8b8b8")
 	b.add_theme_stylebox_override("disabled", dis)
 	b.add_theme_color_override("font_color", Color.WHITE)

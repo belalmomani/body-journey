@@ -134,8 +134,18 @@ func _show_intro() -> void:
 # ---------- اللعب ----------
 func _input(e: InputEvent) -> void:
 	if phase != "play": return
-	if (e is InputEventMouseButton and e.pressed) or (e is InputEventMouseMotion and e.button_mask & MOUSE_BUTTON_MASK_LEFT):
-		target = Vector2(clampf(e.position.x, 60, 660), clampf(e.position.y, 160, 1220))
+	var pos := Vector2.ZERO
+	var hit := false
+	if e is InputEventMouseButton:
+		var mb: InputEventMouseButton = e
+		hit = mb.pressed
+		pos = mb.position
+	elif e is InputEventMouseMotion:
+		var mm: InputEventMouseMotion = e
+		hit = (mm.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0
+		pos = mm.position
+	if hit:
+		target = Vector2(clampf(pos.x, 60, 660), clampf(pos.y, 160, 1220))
 
 func _process(delta: float) -> void:
 	if phase != "play": return

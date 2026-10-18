@@ -121,7 +121,7 @@ func merge_remote(users: Dictionary, progress: Dictionary) -> void:
 	save_local()
 
 func achievements() -> Array:
-	var done := data["completed"].size()
+	var done: int = data["completed"].size()
 	var three := 0
 	for k in data["completed"]:
 		if int(data["completed"][k].get("stars", 0)) >= 3:
