@@ -1,0 +1,12 @@
+name: validate
+on: [push, pull_request]
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    container: barichello/godot-ci:4.3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Import project
+        run: godot --headless --import || true
+      - name: Run tests
+        run: godot --headless -s tests/run_tests.gd

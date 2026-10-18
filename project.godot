@@ -1,0 +1,27 @@
+config_version=5
+
+[application]
+config/name="رحلة داخل الجسم"
+run/main_scene="res://scenes/splash.tscn"
+config/features=PackedStringArray("4.3", "GL Compatibility")
+config/icon="res://assets/icon.svg"
+
+[autoload]
+GameState="*res://scripts/game_state.gd"
+Cloud="*res://scripts/cloud.gd"
+AdManager="*res://scripts/ads/ad_manager.gd"
+
+[display]
+window/size/viewport_width=720
+window/size/viewport_height=1280
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+window/handheld/orientation=1
+
+[internationalization]
+rendering/force_right_to_left_layout_direction=true
+locale/fallback="ar"
+
+[rendering]
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
