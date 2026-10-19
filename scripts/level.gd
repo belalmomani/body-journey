@@ -1,13 +1,24 @@
 extends Control
 # محرك مرحلة عام. عالم اللعب من Node2D/Sprite2D (لا يتأثر باتجاه الواجهة RTL)، والواجهة في CanvasLayer.
 const SPEED := 460.0
-const BUILD := "v4"
+const BUILD := "v5"
+const ITEM_TEX := {
+	"النواة": "res://assets/cell/nucleus.png",
+	"الميتوكوندريا": "res://assets/cell/mito.png",
+	"الريبوسوم": "res://assets/cell/ribo.png",
+	"الغشاء": "res://assets/cell/membrane.png",
+	"الشبكة الإندوبلازمية": "res://assets/cell/er.png",
+	"جهاز جولجي": "res://assets/cell/golgi.png",
+}
 var lv := {}
 var phase := "intro"   # intro | play | quiz | puzzle | result
 var world: Node2D
 var player: Sprite2D
 var idle_tex: Texture2D
 var run_frames: Array = []
+var act_tex: Texture2D
+var act_t := 0.0
+var toast: Control
 var ppos := Vector2(360, 1000)
 var target := Vector2(360, 1000)
 var items: Array = []
@@ -35,11 +46,11 @@ func _ready() -> void:
 		src = "fallback"
 	rng.seed = GameState.selected_level * 7919
 	var bg := TextureRect.new()
-	bg.texture = load(lv.get("background", "res://assets/backgrounds/bg_default.svg"))
+	bg.texture = load("res://assets/backgrounds/bg_cell_deep.png")
 	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	bg.stretch_mode = TextureRect.STRETCH_SCALE
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bg.modulate = Color(lv.get("color", "#ffffff")).lightened(0.4)
+	bg.modulate = Color.WHITE if GameState.selected_level == 1 else Color(lv.get("color", "#ffffff")).lerp(Color.WHITE, 0.6)
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(bg)
 	world = Node2D.new()
@@ -54,31 +65,40 @@ func _ready() -> void:
 		halo.modulate = Color(1, 0.9, 0.2, 0.5)
 		n.add_child(halo)
 		var body := Sprite2D.new()
-		body.texture = tex_item
-		body.scale = Vector2.ONE * (110.0 / 128.0)
+		var bt: Texture2D = tex_item
+		var bs := 110.0
+		if ITEM_TEX.has(nm):
+			bt = load(ITEM_TEX[nm])
+			bs = 140.0
+		body.texture = bt
+		body.scale = Vector2.ONE * (bs / maxf(bt.get_width(), bt.get_height()))
 		n.add_child(body)
 		var l := UI.label(nm, 24)
 		l.size = Vector2(200, 32)
-		l.position = Vector2(-100, 62)
+		l.position = Vector2(-100, bs * 0.5 + 8.0)
+		l.add_theme_color_override("font_color", Color.WHITE)
+		l.add_theme_color_override("font_outline_color", Color("#3b1a5a"))
+		l.add_theme_constant_override("outline_size", 8)
 		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		n.add_child(l)
 		world.add_child(n)
 		items.append({"node": n, "name": nm, "got": false, "halo": halo, "base": n.position})
-	var tex_h: Texture2D = load("res://assets/characters/germ.svg")
+	var germ_tex: Array = [load("res://assets/enemies/virus.png"), load("res://assets/enemies/bact.png")]
 	for i in int(lv.get("hazards", 2)):
 		var h := Sprite2D.new()
-		h.texture = tex_h
-		h.scale = Vector2.ONE * (100.0 / 128.0)
+		var gt: Texture2D = germ_tex[i % 2]
+		h.texture = gt
+		h.set_meta("s", 120.0 / maxf(gt.get_width(), gt.get_height()))
+		h.scale = Vector2.ONE * float(h.get_meta("s"))
 		h.position = _free_spot()
 		world.add_child(h)
 		var sp := 110.0 + 25.0 * int(lv.get("difficulty", 1))
 		hazards.append({"node": h, "vel": Vector2.from_angle(rng.randf() * TAU) * sp})
-	idle_tex = load("res://assets/characters/player.svg")
-	for i in 4:
-		run_frames.append(load("res://assets/characters/player_run_%d.svg" % i))
+	idle_tex = load("res://assets/characters/hero/hero_idle.png")
+	act_tex = load("res://assets/characters/hero/hero_interact.png")
+	run_frames = [load("res://assets/characters/hero/hero_run.png"), load("res://assets/characters/hero/hero_walk.png")]
 	player = Sprite2D.new()
-	player.texture = idle_tex
-	player.scale = Vector2.ONE * (140.0 / 128.0)
+	_set_player_tex(idle_tex)
 	player.position = ppos
 	world.add_child(player)
 	# --- واجهة ---
@@ -120,10 +140,10 @@ func _ready() -> void:
 
 func _free_spot() -> Vector2:
 	for k in 40:
-		var p := Vector2(rng.randf_range(110, 610), rng.randf_range(280, 880))
+		var p := Vector2(rng.randf_range(110, 610), rng.randf_range(260, 900))
 		var ok := true
 		for it in items:
-			if (it["node"] as Node2D).position.distance_to(p) < 160.0:
+			if (it["node"] as Node2D).position.distance_to(p) < 140.0:
 				ok = false
 		if ok:
 			return p
@@ -172,8 +192,8 @@ func _show_intro() -> void:
 	phase = "intro"
 	var v := _panel(lv.get("title", ""), lv.get("dialogue", "") + "\n\n" + lv.get("intro", ""))
 	var g := TextureRect.new()
-	g.texture = load("res://assets/characters/guide.svg")
-	g.custom_minimum_size = Vector2(0, 150)
+	g.texture = load("res://assets/characters/hero/hero_idle.png")
+	g.custom_minimum_size = Vector2(0, 220)
 	g.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	g.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	v.add_child(g)
@@ -207,19 +227,20 @@ func _process(delta: float) -> void:
 	if phase != "play":
 		return
 	AdManager.add_play_time(delta)
+	act_t = maxf(0.0, act_t - delta)
 	var d := target - ppos
 	var moving := d.length() > 8.0
 	var bob := 2.0 * sin(t * 3.0)
 	if moving:
 		ppos += d.normalized() * minf(SPEED * delta, d.length())
 		run_t += delta
-		player.texture = run_frames[int(run_t * 10.0) % 4]
+		_set_player_tex(act_tex if act_t > 0.0 else run_frames[int(run_t * 9.0) % 2])
 		if absf(d.x) > 6.0:
 			player.flip_h = d.x < 0.0
 		player.rotation = 0.07 * (-1.0 if player.flip_h else 1.0)
 		bob = -4.0 * absf(sin(run_t * 20.0))
 	else:
-		player.texture = idle_tex
+		_set_player_tex(act_tex if act_t > 0.0 else idle_tex)
 		player.rotation = 0.0
 	player.position = ppos + Vector2(0.0, bob)
 	inv = maxf(0.0, inv - delta)
@@ -236,9 +257,9 @@ func _process(delta: float) -> void:
 			vel.y = -vel.y
 			n.position.y = clampf(n.position.y, 160.0, vp.y - 60.0)
 		h["vel"] = vel
-		n.rotation += delta * 1.2
-		n.scale = Vector2.ONE * (100.0 / 128.0) * (1.0 + 0.06 * sin(t * 6.0 + n.position.x))
-		if inv <= 0.0 and n.position.distance_to(ppos) < 75.0:
+		n.rotation = 0.15 * sin(t * 3.0 + n.position.x)
+		n.scale = Vector2.ONE * float(n.get_meta("s")) * (1.0 + 0.06 * sin(t * 6.0 + n.position.x))
+		if inv <= 0.0 and n.position.distance_to(ppos) < 70.0:
 			hearts -= 1
 			inv = 1.5
 			GameState.sfx("hit")
@@ -256,11 +277,13 @@ func _process(delta: float) -> void:
 			var hl: Sprite2D = it["halo"]
 			hl.modulate.a = 0.35 + 0.25 * sin(t * 5.0)
 			hl.scale = Vector2.ONE * (180.0 / 128.0) * (1.0 + 0.08 * sin(t * 5.0))
-			if nn.position.distance_to(ppos) < 90.0:
+			if nn.position.distance_to(ppos) < 100.0:
 				it["got"] = true
 				_pop(nn)
 				score += 100
 				GameState.sfx("collect")
+				act_t = 0.6
+				_toast_fact(it["name"])
 				_update_hud()
 	if all and not items.is_empty():
 		_after_collect()
@@ -445,6 +468,44 @@ func _fallback() -> Dictionary:
 	return {"id": GameState.selected_level, "title": "الخلية", "color": "#7fd6c2",
 		"background": "res://assets/backgrounds/bg_default.svg",
 		"intro": "اجمع العناصر المضيئة، وابتعد عن الجراثيم، ثم أجب عن السؤال.",
-		"dialogue": "أهلاً! أنا نبض، مرشدك داخل الجسم.",
+		"dialogue": "أهلاً! أنا رائد، مستكشف الجسم.",
 		"items": ["النواة", "الميتوكوندريا", "الريبوسوم", "الغشاء"], "hazards": 2, "difficulty": 1,
 		"questions": [{"q": "أي جزء هو مركز التحكم في الخلية؟", "answer": "النواة", "wrong": ["الغشاء", "الماء"]}]}
+
+func _set_player_tex(tex: Texture2D) -> void:
+	player.texture = tex
+	var k := 230.0 / idle_tex.get_height()
+	player.scale = Vector2.ONE * k
+	player.offset = Vector2(0.0, (idle_tex.get_height() - tex.get_height()) / 2.0)
+
+func _toast_fact(nm: String) -> void:
+	var f: Dictionary = lv.get("facts", {})
+	if not f.has(nm):
+		return
+	_toast(str(f[nm]))
+	GameState.speak(str(f[nm]))
+
+func _toast(text: String) -> void:
+	if toast and is_instance_valid(toast):
+		toast.queue_free()
+	var pc := PanelContainer.new()
+	pc.layout_direction = Control.LAYOUT_DIRECTION_RTL
+	pc.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	pc.offset_top = -240.0
+	pc.offset_bottom = -70.0
+	pc.offset_left = 30.0
+	pc.offset_right = -30.0
+	pc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.15, 0.05, 0.25, 0.88)
+	sb.set_corner_radius_all(24)
+	sb.set_content_margin_all(16)
+	pc.add_theme_stylebox_override("panel", sb)
+	var l := UI.label(text, 28, Color.WHITE)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pc.add_child(l)
+	ui_layer.add_child(pc)
+	toast = pc
+	var tw := create_tween()
+	tw.tween_interval(4.0)
+	tw.tween_callback(pc.queue_free)
