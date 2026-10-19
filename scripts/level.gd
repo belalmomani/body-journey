@@ -60,7 +60,7 @@ func _ready() -> void:
 		n.add_child(l)
 		n.position = _free_spot() - n.size / 2
 		add_child(n)
-		items.append({"node": n, "name": nm, "got": false, "halo": halo})
+		items.append({"node": n, "name": nm, "got": false, "halo": halo, "base": n.position})
 	var tex_h = load("res://assets/characters/germ.svg")
 	for i in int(lv.get("hazards", 2)):
 		var h := TextureRect.new()
@@ -80,11 +80,23 @@ func _ready() -> void:
 	player.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	player.position = ppos - player.size / 2
 	add_child(player)
+	var bar := ColorRect.new()
+	bar.color = Color(1, 1, 1, 0.75)
+	bar.size = Vector2(720, 110)
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(bar)
 	hud = UI.label("", 30)
 	hud.position = Vector2(20, 16)
 	hud.size = Vector2(680, 90)
 	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(hud)
+	var dbg := Label.new()
+	dbg.text = "build v3 | items:%d | src:%s" % [items.size(), "json" if GameState.levels.has(GameState.selected_level) else "fallback"]
+	dbg.position = Vector2(10, 1200)
+	dbg.add_theme_font_size_override("font_size", 22)
+	dbg.add_theme_color_override("font_color", Color("#c0392b"))
+	dbg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(dbg)
 	overlay = Control.new()
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(overlay)
@@ -136,6 +148,13 @@ func _close_panel() -> void:
 func _show_intro() -> void:
 	phase = "intro"
 	var v := _panel(lv.get("title", ""), lv.get("dialogue", "") + "\n\n" + lv.get("intro", ""))
+	var g := TextureRect.new()
+	g.texture = load("res://assets/characters/guide.svg")
+	g.custom_minimum_size = Vector2(0, 150)
+	g.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	g.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	v.add_child(g)
+	v.move_child(g, 0)
 	GameState.speak(lv.get("intro", ""))
 	v.add_child(UI.button("هيا نبدأ", func():
 		_close_panel(); phase = "play"))
@@ -190,8 +209,10 @@ func _process(delta: float) -> void:
 		if not it["got"]:
 			all = false
 			it["halo"].modulate.a = 0.3 + 0.2 * sin(t * 5.0)
+			var nn: Control = it["node"]
+			nn.position.y = float(it["base"].y) + 7.0 * sin(t * 3.0 + float(it["base"].x))
 			if (it["node"].position + Vector2(55, 55)).distance_to(ppos) < 85.0:
-				it["got"] = true; it["node"].visible = false
+				it["got"] = true; _pop(it["node"])
 				score += 100; GameState.sfx("collect"); _update_hud()
 	if all and not items.is_empty(): _after_collect()
 
@@ -365,3 +386,9 @@ func _fallback() -> Dictionary:
 		"dialogue": "أهلاً! أنا نبض، مرشدك داخل الجسم.",
 		"items": ["النواة", "الميتوكوندريا", "الريبوسوم", "الغشاء"], "hazards": 2, "difficulty": 1,
 		"questions": [{"q": "أي جزء هو مركز التحكم في الخلية؟", "answer": "النواة", "wrong": ["الغشاء", "الماء"]}]}
+
+func _pop(n: Control) -> void:
+	n.pivot_offset = Vector2(55, 55)
+	var tw := create_tween()
+	tw.tween_property(n, "scale", Vector2(1.9, 1.9), 0.25)
+	tw.parallel().tween_property(n, "modulate:a", 0.0, 0.25)
