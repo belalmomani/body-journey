@@ -6,7 +6,13 @@ jobs:
     container: barichello/godot-ci:4.3
     steps:
       - uses: actions/checkout@v4
+      - name: Locate Godot project
+        id: p
+        run: |
+          f=$(find . -name project.godot -not -path "./.godot/*" | head -1)
+          if [ -z "$f" ]; then echo "project.godot not found in repository"; ls -la; exit 1; fi
+          echo "dir=$(dirname "$f")" >> "$GITHUB_OUTPUT"
       - name: Import project
-        run: godot --headless --import || true
+        run: godot --headless --path "${{ steps.p.outputs.dir }}" --import || true
       - name: Run tests
-        run: godot --headless -s tests/run_tests.gd
+        run: godot --headless --path "${{ steps.p.outputs.dir }}" -s res://tests/run_tests.gd
