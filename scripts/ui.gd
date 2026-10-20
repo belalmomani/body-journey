@@ -68,3 +68,20 @@ static func scroll(parent: Control) -> VBoxContainer:
 
 static func back_button(parent: Control, scene := "res://scenes/menu.tscn") -> void:
 	parent.add_child(button("رجوع", func(): GameState.go(scene), Color("#6c63ff")))
+
+static func holo_style() -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.07, 0.09, 0.28, 0.78)
+	sb.set_corner_radius_all(40)
+	sb.set_border_width_all(3)
+	sb.border_color = Color(0.5, 0.9, 1.0, 0.85)
+	sb.shadow_color = Color(0.4, 0.85, 1.0, 0.35)
+	sb.shadow_size = 18
+	sb.set_content_margin_all(26)
+	return sb
+
+static func glow_label(text: String, size := 32, color := Color.WHITE) -> Label:
+	var l := label(text, size, color)
+	l.add_theme_color_override("font_outline_color", Color(0.05, 0.05, 0.2, 0.95))
+	l.add_theme_constant_override("outline_size", 7)
+	return l

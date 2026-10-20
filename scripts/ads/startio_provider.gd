@@ -3,6 +3,8 @@ extends AdProvider
 # هيكل مزود Start.io. غير مفعّل وغير مُختبَر.
 # Godot لا يملك إضافة رسمية لـ Start.io؛ يلزم إضافة Android (Kotlin) مخصصة تُسجَّل كـ Engine singleton.
 # أسماء الدوال أدناه افتراضية ويجب مطابقتها مع الإضافة التي تكتبها بعد مراجعة https://docs.start.io/
+# معرّف التطبيق في Start.io (غير سري). غير مستخدم الآن: Start.io لا يُسمح به في تطبيقات موجّهة للأطفال فقط.
+const APP_ID := "209771676"
 const SINGLETON := "StartIoBridge"
 var test_mode := true
 func _plugin():

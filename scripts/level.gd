@@ -1,7 +1,7 @@
 extends Control
 # محرك مرحلة عام. عالم اللعب من Node2D/Sprite2D (لا يتأثر باتجاه الواجهة RTL)، والواجهة في CanvasLayer.
 const SPEED := 460.0
-const BUILD := "v5"
+const BUILD := "v7"
 const ITEM_TEX := {
 	"النواة": "res://assets/cell/nucleus.png",
 	"الميتوكوندريا": "res://assets/cell/mito.png",
@@ -19,6 +19,7 @@ var run_frames: Array = []
 var act_tex: Texture2D
 var act_t := 0.0
 var toast: Control
+var qpanel: QuestionPanel
 var ppos := Vector2(360, 1000)
 var target := Vector2(360, 1000)
 var items: Array = []
@@ -173,14 +174,15 @@ func _panel(title: String, body: String) -> VBoxContainer:
 		m.add_theme_constant_override("margin_" + s, 160)
 	overlay.add_child(m)
 	var bgp := PanelContainer.new()
+	bgp.add_theme_stylebox_override("panel", UI.holo_style())
 	m.add_child(bgp)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 20)
 	v.alignment = BoxContainer.ALIGNMENT_CENTER
 	bgp.add_child(v)
-	v.add_child(UI.label(title, 44))
+	v.add_child(UI.glow_label(title, 44))
 	if body != "":
-		v.add_child(UI.label(body, 30))
+		v.add_child(UI.glow_label(body, 30))
 	return v
 
 func _close_panel() -> void:
@@ -306,6 +308,14 @@ func _start_quiz() -> void:
 	phase = "quiz"
 	qi = 0
 	qok = 0
+	for h in hazards:
+		(h["node"] as Node2D).visible = false
+	var vp := get_viewport_rect().size
+	ppos = Vector2(vp.x * 0.5, vp.y * 0.36 - 150.0)   # الشخصية تبقى ظاهرة فوق لوحة السؤال
+	player.position = ppos
+	player.flip_h = false
+	player.rotation = 0.0
+	_set_player_tex(idle_tex)
 	_ask()
 
 func _ask() -> void:
@@ -314,24 +324,47 @@ func _ask() -> void:
 		_finish()
 		return
 	var q: Dictionary = qs[qi]
-	var v := _panel("سؤال %d من %d" % [qi + 1, qs.size()], q["q"])
-	GameState.speak(q["q"])
-	var opts: Array = [q["answer"]] + q["wrong"]
-	opts.shuffle()
-	for o in opts:
-		v.add_child(UI.button(o, func(): _answer(o == q["answer"], q), Color("#6c63ff")))
+	for c in overlay.get_children():
+		c.queue_free()
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	player.rotation = 0.0
+	_set_player_tex(idle_tex)
+	qpanel = QuestionPanel.new()
+	qpanel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	qpanel.anchor_top = 0.36
+	qpanel.offset_left = 24.0
+	qpanel.offset_right = -24.0
+	qpanel.offset_top = 0.0
+	qpanel.offset_bottom = -30.0
+	overlay.add_child(qpanel)
+	qpanel.build(q, qi, qs.size(), score, GameState.selected_level)
+	qpanel.answered.connect(_on_answered)
+	qpanel.next_pressed.connect(func():
+		qi += 1
+		_ask())
+	GameState.speak(str(q["q"]))
 
-func _answer(ok: bool, q: Dictionary) -> void:
+func _on_answered(ok: bool, _q: Dictionary) -> void:
 	if ok:
 		qok += 1
 		score += 200
 		GameState.sfx("collect")
 	else:
 		GameState.sfx("hit")
-	var v := _panel("أحسنت!" if ok else "ليس تماماً", "" if ok else "الإجابة الصحيحة: " + q["answer"])
-	v.add_child(UI.button("التالي", func():
-		qi += 1
-		_ask()))
+	_update_hud()
+	qpanel.set_score(score)
+	_hero_react(ok)
+
+func _hero_react(ok: bool) -> void:
+	_set_player_tex(act_tex if ok else idle_tex)
+	var tw := create_tween()
+	if ok:
+		tw.tween_property(player, "position:y", ppos.y - 40.0, 0.18)
+		tw.tween_property(player, "position:y", ppos.y, 0.18)
+	else:
+		tw.tween_property(player, "rotation", 0.12, 0.12)
+		tw.tween_property(player, "rotation", -0.12, 0.12)
+		tw.tween_property(player, "rotation", 0.0, 0.12)
 
 func _finish() -> void:
 	phase = "result"
@@ -358,6 +391,8 @@ func _after_collect() -> void:
 
 func _start_puzzle() -> void:
 	phase = "puzzle"
+	for h in hazards:
+		(h["node"] as Node2D).visible = false
 	var p: Dictionary = lv["puzzle"]
 	match p["type"]:
 		"order": _puz_order(p)

@@ -2,6 +2,8 @@ extends Node
 # Firebase عبر REST الرسمي (Identity Toolkit + Firestore). لا مفاتيح خادم، ولا تخزين لكلمات المرور.
 signal auth_changed
 const SESSION := "user://session.dat"
+const COL_USERS := "bj_users"        # مجلدات خاصة بهذه اللعبة داخل مشروع Firebase المشترك
+const COL_PROGRESS := "bj_progress"
 var cfg := {}
 var configured := false
 var uid := ""
@@ -126,8 +128,8 @@ func sign_out() -> void:
 func delete_account() -> Dictionary:
 	if not signed_in():
 		return {"ok": false, "error": "NOT_SIGNED_IN"}
-	await _fs(HTTPClient.METHOD_DELETE, "users/" + uid)
-	await _fs(HTTPClient.METHOD_DELETE, "progress/" + uid)
+	await _fs(HTTPClient.METHOD_DELETE, COL_USERS + "/" + uid)
+	await _fs(HTTPClient.METHOD_DELETE, COL_PROGRESS + "/" + uid)
 	var r = await _auth_call("accounts:delete", {"idToken": id_token})
 	if r["ok"]:
 		sign_out()
@@ -231,8 +233,8 @@ func push() -> bool:
 		"currentLevel": int(d["current_level"]), "totalStars": int(d["total_stars"]), "totalScore": int(d["total_score"]),
 		"unlockedLevels": unlocked, "completedLevels": done,
 		"settings": {"music": float(d["settings"]["music"]), "sfx": float(d["settings"]["sfx"])}}
-	var a = await _fs(HTTPClient.METHOD_PATCH, "users/" + uid, _enc(user_doc)["mapValue"])
-	var b = await _fs(HTTPClient.METHOD_PATCH, "progress/" + uid, _enc({"levels": lv, "updatedAt": now})["mapValue"])
+	var a = await _fs(HTTPClient.METHOD_PATCH, COL_USERS + "/" + uid, _enc(user_doc)["mapValue"])
+	var b = await _fs(HTTPClient.METHOD_PATCH, COL_PROGRESS + "/" + uid, _enc({"levels": lv, "updatedAt": now})["mapValue"])
 	_busy = false
 	var ok: bool = a["code"] == 200 and b["code"] == 200
 	dirty = not ok  # عند الفشل/انقطاع الإنترنت يُعاد تلقائياً كل 30 ثانية
@@ -241,8 +243,8 @@ func push() -> bool:
 func pull() -> bool:
 	if not signed_in():
 		return false
-	var a = await _fs(HTTPClient.METHOD_GET, "users/" + uid)
-	var b = await _fs(HTTPClient.METHOD_GET, "progress/" + uid)
+	var a = await _fs(HTTPClient.METHOD_GET, COL_USERS + "/" + uid)
+	var b = await _fs(HTTPClient.METHOD_GET, COL_PROGRESS + "/" + uid)
 	var u := {}
 	var p := {}
 	if a["code"] == 200: u = _dec({"mapValue": {"fields": a["json"].get("fields", {})}})

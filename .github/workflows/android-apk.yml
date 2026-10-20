@@ -99,6 +99,19 @@ jobs:
         run: |
           grep -q "import_etc2_astc" project.godot || sed -i '/^\[rendering\]/a textures/vram_compression/import_etc2_astc=true' project.godot
           sed -n '/\[rendering\]/,$p' project.godot
+      - name: Write Firebase config (from repository secrets)
+        working-directory: ${{ steps.p.outputs.dir }}
+        env:
+          FB_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FB_PROJECT: ${{ secrets.FIREBASE_PROJECT_ID }}
+        run: |
+          mkdir -p config
+          if [ -n "$FB_KEY" ] && [ -n "$FB_PROJECT" ]; then
+            printf '{"apiKey":"%s","projectId":"%s"}' "$FB_KEY" "$FB_PROJECT" > config/firebase_config.json
+            echo "Firebase config written"
+          else
+            echo "No Firebase secrets: building in local-only mode"
+          fi
       - name: Import project
         working-directory: ${{ steps.p.outputs.dir }}
         run: godot --headless --import || true
