@@ -1,7 +1,7 @@
 extends Control
 # محرك مرحلة عام. عالم اللعب من Node2D/Sprite2D (لا يتأثر باتجاه الواجهة RTL)، والواجهة في CanvasLayer.
-const SPEED := 460.0
-const BUILD := "v8"
+const SPEED := 400.0
+const BUILD := "v10"
 const ITEM_TEX := {
 	"النواة": "res://assets/cell/nucleus.png",
 	"الميتوكوندريا": "res://assets/cell/mito.png",
@@ -22,7 +22,21 @@ var toast: Control
 var qpanel: QuestionPanel
 var explanations := {}
 var ppos := Vector2(360, 1000)
-var target := Vector2(360, 1000)
+var pad_dir := Vector2.ZERO
+var dpad: DPad
+var kb := Vector2.ZERO
+var idle_t := 0.0
+var puff_t := 0.0
+var hop_y := 0.0
+var shake_rot := 0.0
+var base_k := 1.0
+var turn_tex: Texture2D
+var point_tex: Texture2D
+var glow_tex: GradientTexture2D
+var shadow: Sprite2D
+var alert: Label
+var learn := {}
+var stories := {}
 var items: Array = []
 var hazards: Array = []
 var hearts := 3
@@ -41,6 +55,16 @@ var rng := RandomNumberGenerator.new()
 func _ready() -> void:
 	layout_direction = Control.LAYOUT_DIRECTION_LTR
 	set_anchors_preset(Control.PRESET_FULL_RECT)
+	var sf := FileAccess.open("res://data/stories.json", FileAccess.READ)
+	if sf:
+		var sj = JSON.parse_string(sf.get_as_text())
+		if sj is Dictionary:
+			stories = sj
+	var lf := FileAccess.open("res://data/learn.json", FileAccess.READ)
+	if lf:
+		var lj = JSON.parse_string(lf.get_as_text())
+		if lj is Dictionary:
+			learn = lj
 	var ef := FileAccess.open("res://data/explanations.json", FileAccess.READ)
 	if ef:
 		var ej = JSON.parse_string(ef.get_as_text())
@@ -104,10 +128,35 @@ func _ready() -> void:
 	idle_tex = load("res://assets/characters/hero/hero_idle.png")
 	act_tex = load("res://assets/characters/hero/hero_interact.png")
 	run_frames = [load("res://assets/characters/hero/hero_run.png"), load("res://assets/characters/hero/hero_walk.png")]
+	turn_tex = load("res://assets/characters/hero/hero_turn.png")
+	point_tex = load("res://assets/characters/hero/hero_point.png")
+	var gr := Gradient.new()
+	gr.set_color(0, Color(1, 1, 1, 0.9))
+	gr.set_color(1, Color(1, 1, 1, 0.0))
+	glow_tex = GradientTexture2D.new()
+	glow_tex.gradient = gr
+	glow_tex.fill = GradientTexture2D.FILL_RADIAL
+	glow_tex.fill_from = Vector2(0.5, 0.5)
+	glow_tex.fill_to = Vector2(1.0, 0.5)
+	glow_tex.width = 128
+	glow_tex.height = 128
+	shadow = Sprite2D.new()
+	shadow.texture = glow_tex
+	shadow.modulate = Color(0, 0, 0, 0.5)
+	shadow.scale = Vector2(1.6, 0.42)
+	world.add_child(shadow)
 	player = Sprite2D.new()
 	_set_player_tex(idle_tex)
 	player.position = ppos
 	world.add_child(player)
+	alert = Label.new()
+	alert.text = "!"
+	alert.add_theme_font_size_override("font_size", 64)
+	alert.add_theme_color_override("font_color", Color("#ff4d4d"))
+	alert.add_theme_color_override("font_outline_color", Color.WHITE)
+	alert.add_theme_constant_override("outline_size", 10)
+	alert.visible = false
+	world.add_child(alert)
 	# --- واجهة ---
 	ui_layer = CanvasLayer.new()
 	ui_layer.layer = 10
@@ -137,6 +186,17 @@ func _ready() -> void:
 	dbg.add_theme_color_override("font_color", Color("#c0392b"))
 	dbg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ui_layer.add_child(dbg)
+	dpad = DPad.new()
+	dpad.anchor_left = 0.0
+	dpad.anchor_right = 0.0
+	dpad.anchor_top = 1.0
+	dpad.anchor_bottom = 1.0
+	dpad.offset_left = 24.0
+	dpad.offset_right = 360.0
+	dpad.offset_top = -376.0
+	dpad.offset_bottom = -40.0
+	dpad.dir_changed.connect(func(d: Vector2): pad_dir = d)
+	ui_layer.add_child(dpad)
 	overlay = Control.new()
 	overlay.layout_direction = Control.LAYOUT_DIRECTION_RTL
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -198,62 +258,85 @@ func _close_panel() -> void:
 
 func _show_intro() -> void:
 	phase = "intro"
-	var v := _panel(lv.get("title", ""), lv.get("dialogue", "") + "\n\n" + lv.get("intro", ""))
+	var st: Dictionary = stories.get(str(GameState.selected_level), {})
+	var story := str(st.get("intro", lv.get("dialogue", "")))
+	var v := _panel(lv.get("title", ""), story + "\n\n" + "اجمع العناصر المضيئة، وتجنّب الجراثيم، ثم أجب عن الأسئلة.")
 	var g := TextureRect.new()
 	g.texture = load("res://assets/characters/hero/hero_idle.png")
-	g.custom_minimum_size = Vector2(0, 220)
+	g.custom_minimum_size = Vector2(0, 170)
 	g.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	g.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	v.add_child(g)
 	v.move_child(g, 0)
-	GameState.speak(lv.get("intro", ""))
+	GameState.speak(story)
 	v.add_child(UI.button("هيا نبدأ", func():
 		_close_panel()
 		phase = "play"))
 	v.add_child(UI.button("الخريطة", func(): GameState.go("res://scenes/map.tscn"), Color("#8d99ae")))
 
 # ---------- اللعب ----------
-func _input(e: InputEvent) -> void:
-	if phase != "play":
-		return
-	var pos := Vector2.ZERO
-	var hit := false
-	if e is InputEventMouseButton:
-		var mb: InputEventMouseButton = e
-		hit = mb.pressed
-		pos = mb.position
-	elif e is InputEventMouseMotion:
-		var mm: InputEventMouseMotion = e
-		hit = (mm.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0
-		pos = mm.position
-	if hit:
-		var vp := get_viewport_rect().size
-		target = Vector2(clampf(pos.x, 40.0, vp.x - 40.0), clampf(pos.y, 150.0, vp.y - 40.0))
-
 func _process(delta: float) -> void:
 	t += delta
+	dpad.visible = phase == "play"
 	if phase != "play":
+		pad_dir = Vector2.ZERO
 		return
 	AdManager.add_play_time(delta)
 	act_t = maxf(0.0, act_t - delta)
-	var d := target - ppos
-	var moving := d.length() > 8.0
-	var bob := 2.0 * sin(t * 3.0)
-	if moving:
-		ppos += d.normalized() * minf(SPEED * delta, d.length())
-		run_t += delta
-		_set_player_tex(act_tex if act_t > 0.0 else run_frames[int(run_t * 9.0) % 2])
-		if absf(d.x) > 6.0:
-			player.flip_h = d.x < 0.0
-		player.rotation = 0.07 * (-1.0 if player.flip_h else 1.0)
-		bob = -4.0 * absf(sin(run_t * 20.0))
-	else:
-		_set_player_tex(act_tex if act_t > 0.0 else idle_tex)
-		player.rotation = 0.0
-	player.position = ppos + Vector2(0.0, bob)
-	inv = maxf(0.0, inv - delta)
-	player.modulate.a = 0.4 if (inv > 0.0 and int(t * 10) % 2 == 0) else 1.0
 	var vp := get_viewport_rect().size
+	var kd := Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
+	var dirv := pad_dir if pad_dir != Vector2.ZERO else kd
+	var moving := dirv.length() > 0.1
+	if moving:
+		ppos += dirv.normalized() * SPEED * delta
+		run_t += delta
+		idle_t = 0.0
+		if absf(dirv.x) > 0.25:
+			player.flip_h = dirv.x < 0.0
+		puff_t -= delta
+		if puff_t <= 0.0:
+			puff_t = 0.16
+			_spawn_puff(ppos + Vector2(0.0, 108.0))
+	else:
+		idle_t += delta
+	ppos += kb * delta
+	kb = kb.move_toward(Vector2.ZERO, 900.0 * delta)
+	ppos = Vector2(clampf(ppos.x, 50.0, vp.x - 50.0), clampf(ppos.y, 190.0, vp.y - 120.0))
+	# --- الوضعية والحركة (تنفّس، خطوات، إشارة إلى أقرب عنصر) ---
+	var bob := 2.0 * sin(t * 2.4)
+	var sq := 0.012 * sin(t * 2.4)
+	var lean := 0.0
+	var near_item := _nearest_item()
+	if act_t > 0.0:
+		_set_player_tex(act_tex)
+	elif moving:
+		var nd := dirv.normalized()
+		if nd.y < -0.6 and absf(nd.x) < 0.55:
+			_set_player_tex(turn_tex)
+		elif nd.y > 0.6 and absf(nd.x) < 0.55:
+			_set_player_tex(idle_tex)
+		else:
+			_set_player_tex(run_frames[int(run_t * 9.0) % 2])
+		bob = -7.0 * absf(sin(run_t * 14.0))
+		sq = 0.05 * sin(run_t * 28.0)
+		lean = 0.07 * sin(run_t * 14.0) + 0.05 * nd.x
+	elif idle_t > 2.0 and near_item != null:
+		player.flip_h = near_item.position.x < ppos.x
+		_set_player_tex(point_tex)
+		bob = -5.0 * absf(sin(t * 5.0))
+	else:
+		_set_player_tex(idle_tex)
+	player.rotation = lean + shake_rot
+	player.scale = Vector2(base_k * (1.0 + sq), base_k * (1.0 - sq))
+	player.position = ppos + Vector2(0.0, bob + hop_y)
+	shadow.position = ppos + Vector2(0.0, 112.0)
+	inv = maxf(0.0, inv - delta)
+	if inv > 1.2:
+		player.modulate = Color(1.0, 0.55, 0.55, 1.0)
+	else:
+		player.modulate = Color(1, 1, 1, 0.4 if (inv > 0.0 and int(t * 10.0) % 2 == 0) else 1.0)
+	# --- الجراثيم ---
+	var near := 9999.0
 	for h in hazards:
 		var n: Sprite2D = h["node"]
 		var vel: Vector2 = h["vel"]
@@ -267,15 +350,21 @@ func _process(delta: float) -> void:
 		h["vel"] = vel
 		n.rotation = 0.15 * sin(t * 3.0 + n.position.x)
 		n.scale = Vector2.ONE * float(n.get_meta("s")) * (1.0 + 0.06 * sin(t * 6.0 + n.position.x))
-		if inv <= 0.0 and n.position.distance_to(ppos) < 70.0:
+		var dist := n.position.distance_to(ppos)
+		near = minf(near, dist)
+		if inv <= 0.0 and dist < 70.0:
 			hearts -= 1
 			inv = 1.5
 			GameState.sfx("hit")
-			target = ppos
+			kb = (ppos - n.position).normalized() * 420.0
+			_shake()
 			_update_hud()
 			if hearts <= 0:
 				_fail()
 				return
+	alert.visible = near < 230.0 and inv <= 0.0
+	alert.position = ppos + Vector2(-14.0, -230.0 + 5.0 * sin(t * 12.0))
+	# --- العناصر ---
 	var all := true
 	for it in items:
 		if not it["got"]:
@@ -291,10 +380,71 @@ func _process(delta: float) -> void:
 				score += 100
 				GameState.sfx("collect")
 				act_t = 0.6
-				_toast_fact(it["name"])
+				_hop()
 				_update_hud()
+				_learn(it["name"])
 	if all and not items.is_empty():
 		_after_collect()
+
+func _nearest_item() -> Node2D:
+	var best: Node2D = null
+	var bd := 1.0e9
+	for it in items:
+		if not it["got"]:
+			var n: Node2D = it["node"]
+			var d := n.position.distance_to(ppos)
+			if d < bd:
+				bd = d
+				best = n
+	return best
+
+func _spawn_puff(p: Vector2) -> void:
+	var s := Sprite2D.new()
+	s.texture = glow_tex
+	s.position = p + Vector2(randf_range(-16.0, 16.0), randf_range(-4.0, 4.0))
+	s.scale = Vector2.ONE * 0.18
+	s.modulate = Color(1, 1, 1, 0.5)
+	world.add_child(s)
+	var tw := create_tween().set_parallel(true)
+	tw.tween_property(s, "scale", Vector2.ONE * 0.45, 0.4)
+	tw.tween_property(s, "modulate:a", 0.0, 0.4)
+	tw.chain().tween_callback(s.queue_free)
+
+func _hop() -> void:
+	var tw := create_tween()
+	tw.tween_property(self, "hop_y", -55.0, 0.15)
+	tw.tween_property(self, "hop_y", 0.0, 0.18)
+
+func _shake() -> void:
+	var tw := create_tween()
+	tw.tween_property(self, "shake_rot", 0.25, 0.06)
+	tw.tween_property(self, "shake_rot", -0.25, 0.08)
+	tw.tween_property(self, "shake_rot", 0.0, 0.08)
+
+# بطاقة تعليمية عند التقاط كل عنصر (قبل الأسئلة)
+func _learn(nm: String) -> void:
+	var texts: Dictionary = learn.get(str(GameState.selected_level), {})
+	var txt := str(texts.get(nm, ""))
+	if txt == "":
+		return
+	phase = "learn"
+	var v := _panel(nm, "")
+	var tr := TextureRect.new()
+	if ITEM_TEX.has(nm):
+		tr.texture = load(ITEM_TEX[nm])
+	else:
+		tr.texture = load("res://assets/characters/item.svg")
+	tr.custom_minimum_size = Vector2(0, 220)
+	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	v.add_child(tr)
+	v.add_child(UI.glow_label(txt, 32))
+	GameState.speak(txt)
+	v.add_child(UI.button("استمع", func(): GameState.speak(txt), Color("#6c63ff")))
+	var go := func():
+		_close_panel()
+		phase = "play"
+	v.add_child(UI.button("فهمت! أكمل", go, Color("#2a9d8f")))
 
 func _pop(n: Node2D) -> void:
 	var tw := create_tween()
@@ -383,7 +533,8 @@ func _finish() -> void:
 	score += hearts * 50
 	GameState.complete_level(GameState.selected_level, stars, score)
 	GameState.sfx("win")
-	var v := _panel("نجحت!", "النجوم: %d من 3\nالنقاط: %d" % [stars, score])
+	var outro := str((stories.get(str(GameState.selected_level), {}) as Dictionary).get("outro", ""))
+	var v := _panel("نجحت!", ("النجوم: %d من 3\nالنقاط: %d" % [stars, score]) + ("\n\n" + outro if outro != "" else ""))
 	var id := GameState.selected_level
 	if id < GameState.LEVEL_COUNT:
 		v.add_child(UI.button("المرحلة التالية", func():
@@ -519,8 +670,8 @@ func _fallback() -> Dictionary:
 
 func _set_player_tex(tex: Texture2D) -> void:
 	player.texture = tex
-	var k := 230.0 / idle_tex.get_height()
-	player.scale = Vector2.ONE * k
+	base_k = 230.0 / idle_tex.get_height()
+	player.scale = Vector2.ONE * base_k
 	player.offset = Vector2(0.0, (idle_tex.get_height() - tex.get_height()) / 2.0)
 
 func _toast_fact(nm: String) -> void:
