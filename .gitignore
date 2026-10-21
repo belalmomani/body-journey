@@ -1,9 +1,6 @@
-.godot/
+*.iml
+.gradle/
+build/
+local.properties
+.idea/
 *.apk
-*.aab
-*.keystore
-*.jks
-config/firebase_config.json
-google-services.json
-export_presets.cfg
-android/build/
