@@ -1,7 +1,7 @@
 extends Control
 # محرك مرحلة عام. عالم اللعب من Node2D/Sprite2D (لا يتأثر باتجاه الواجهة RTL)، والواجهة في CanvasLayer.
 const SPEED := 460.0
-const BUILD := "v7"
+const BUILD := "v8"
 const ITEM_TEX := {
 	"النواة": "res://assets/cell/nucleus.png",
 	"الميتوكوندريا": "res://assets/cell/mito.png",
@@ -20,6 +20,7 @@ var act_tex: Texture2D
 var act_t := 0.0
 var toast: Control
 var qpanel: QuestionPanel
+var explanations := {}
 var ppos := Vector2(360, 1000)
 var target := Vector2(360, 1000)
 var items: Array = []
@@ -40,6 +41,11 @@ var rng := RandomNumberGenerator.new()
 func _ready() -> void:
 	layout_direction = Control.LAYOUT_DIRECTION_LTR
 	set_anchors_preset(Control.PRESET_FULL_RECT)
+	var ef := FileAccess.open("res://data/explanations.json", FileAccess.READ)
+	if ef:
+		var ej = JSON.parse_string(ef.get_as_text())
+		if ej is Dictionary:
+			explanations = ej
 	lv = GameState.levels.get(GameState.selected_level, {})
 	var src := "json"
 	if lv.is_empty():
@@ -323,7 +329,11 @@ func _ask() -> void:
 	if qi >= qs.size():
 		_finish()
 		return
-	var q: Dictionary = qs[qi]
+	var q: Dictionary = (qs[qi] as Dictionary).duplicate()
+	if str(q.get("explain", "")) == "":
+		var arr: Array = explanations.get(str(GameState.selected_level), [])
+		if qi < arr.size():
+			q["explain"] = arr[qi]
 	for c in overlay.get_children():
 		c.queue_free()
 	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
