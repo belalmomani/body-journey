@@ -1,7 +1,7 @@
 extends Control
 # محرك مرحلة عام. عالم اللعب من Node2D/Sprite2D (لا يتأثر باتجاه الواجهة RTL)، والواجهة في CanvasLayer.
 const SPEED := 400.0
-const BUILD := "v10"
+const BUILD := "v11"
 const ITEM_TEX := {
 	"النواة": "res://assets/cell/nucleus.png",
 	"الميتوكوندريا": "res://assets/cell/mito.png",
@@ -9,6 +9,17 @@ const ITEM_TEX := {
 	"الغشاء": "res://assets/cell/membrane.png",
 	"الشبكة الإندوبلازمية": "res://assets/cell/er.png",
 	"جهاز جولجي": "res://assets/cell/golgi.png",
+}
+const ITEM_SIZE := {"النواة": 300.0, "الميتوكوندريا": 210.0, "الريبوسوم": 180.0, "الغشاء": 220.0, "الشبكة الإندوبلازمية": 210.0, "جهاز جولجي": 200.0}
+const ITEM_POS := {"النواة": Vector2(0.50, 0.40), "الميتوكوندريا": Vector2(0.22, 0.24), "الشبكة الإندوبلازمية": Vector2(0.78, 0.25), "جهاز جولجي": Vector2(0.80, 0.55), "الريبوسوم": Vector2(0.20, 0.50), "الغشاء": Vector2(0.76, 0.76)}
+const ITEM_KIND := {"النواة": "nucleus", "الميتوكوندريا": "mito", "الريبوسوم": "ribo", "الغشاء": "membrane", "الشبكة الإندوبلازمية": "er", "جهاز جولجي": "golgi"}
+const HINTS := {
+	"النواة": "ما هذا الشيء الكبير؟ إنها النواة… مركز التحكم!",
+	"الميتوكوندريا": "أرى ومضات طاقة تتصاعد من هناك!",
+	"الريبوسوم": "جسيمات صغيرة تبني شيئاً ما!",
+	"الغشاء": "هذا الغشاء يحرس الخلية ويُدخل إليها الغذاء!",
+	"الشبكة الإندوبلازمية": "مواد تنتقل عبر هذه الشبكة!",
+	"جهاز جولجي": "حويصلات صغيرة تدور وتخرج من هنا!",
 }
 var lv := {}
 var phase := "intro"   # intro | play | quiz | puzzle | result
@@ -36,6 +47,13 @@ var glow_tex: GradientTexture2D
 var shadow: Sprite2D
 var alert: Label
 var learn := {}
+var world_back: CellWorld
+var world_front: CellWorld
+var hazards_on := true
+var hints_seen := {}
+var point_t := 0.0
+var look_item: Node2D
+var collected := 0
 var stories := {}
 var items: Array = []
 var hazards: Array = []
@@ -86,24 +104,38 @@ func _ready() -> void:
 	add_child(bg)
 	world = Node2D.new()
 	add_child(world)
+	var vps := get_viewport_rect().size
+	ppos = Vector2(vps.x * 0.62, vps.y * 0.8)
+	world_back = CellWorld.new()
+	world.add_child(world_back)
+	world_back.setup("back", 46)
 	var tex_item: Texture2D = load("res://assets/characters/item.svg")
 	for nm in lv.get("items", []):
 		var n := Node2D.new()
-		n.position = _free_spot()
+		if GameState.selected_level == 1 and ITEM_POS.has(nm):
+			n.position = Vector2(vps.x * float(ITEM_POS[nm].x), vps.y * float(ITEM_POS[nm].y))
+		else:
+			n.position = _free_spot()
 		var halo := Sprite2D.new()
 		halo.texture = tex_item
-		halo.scale = Vector2.ONE * (180.0 / 128.0)
-		halo.modulate = Color(1, 0.9, 0.2, 0.5)
 		n.add_child(halo)
 		var body := Sprite2D.new()
 		var bt: Texture2D = tex_item
 		var bs := 110.0
 		if ITEM_TEX.has(nm):
 			bt = load(ITEM_TEX[nm])
-			bs = 140.0
+			bs = float(ITEM_SIZE.get(nm, 150.0))
+		halo.scale = Vector2.ONE * ((bs * 1.5) / 128.0)
+		halo.modulate = Color(1, 0.9, 0.2, 0.4)
 		body.texture = bt
 		body.scale = Vector2.ONE * (bs / maxf(bt.get_width(), bt.get_height()))
 		n.add_child(body)
+		var fxn: OrganelleFX = null
+		if ITEM_KIND.has(nm):
+			fxn = OrganelleFX.new()
+			fxn.kind = ITEM_KIND[nm]
+			fxn.r = bs * 0.5
+			n.add_child(fxn)
 		var l := UI.label(nm, 24)
 		l.size = Vector2(200, 32)
 		l.position = Vector2(-100, bs * 0.5 + 8.0)
@@ -113,7 +145,7 @@ func _ready() -> void:
 		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		n.add_child(l)
 		world.add_child(n)
-		items.append({"node": n, "name": nm, "got": false, "halo": halo, "base": n.position})
+		items.append({"node": n, "name": nm, "got": false, "halo": halo, "base": n.position, "fx": fxn, "r": bs * 0.5, "hs": (bs * 1.5) / 128.0})
 	var germ_tex: Array = [load("res://assets/enemies/virus.png"), load("res://assets/enemies/bact.png")]
 	for i in int(lv.get("hazards", 2)):
 		var h := Sprite2D.new()
@@ -122,9 +154,12 @@ func _ready() -> void:
 		h.set_meta("s", 120.0 / maxf(gt.get_width(), gt.get_height()))
 		h.scale = Vector2.ONE * float(h.get_meta("s"))
 		h.position = _free_spot()
+		if GameState.selected_level == 1:
+			h.visible = false
 		world.add_child(h)
 		var sp := 110.0 + 25.0 * int(lv.get("difficulty", 1))
 		hazards.append({"node": h, "vel": Vector2.from_angle(rng.randf() * TAU) * sp})
+	hazards_on = GameState.selected_level != 1
 	idle_tex = load("res://assets/characters/hero/hero_idle.png")
 	act_tex = load("res://assets/characters/hero/hero_interact.png")
 	run_frames = [load("res://assets/characters/hero/hero_run.png"), load("res://assets/characters/hero/hero_walk.png")]
@@ -149,6 +184,9 @@ func _ready() -> void:
 	_set_player_tex(idle_tex)
 	player.position = ppos
 	world.add_child(player)
+	world_front = CellWorld.new()
+	world.add_child(world_front)
+	world_front.setup("front", 10)
 	alert = Label.new()
 	alert.text = "!"
 	alert.add_theme_font_size_override("font_size", 64)
@@ -269,14 +307,15 @@ func _show_intro() -> void:
 	v.add_child(g)
 	v.move_child(g, 0)
 	GameState.speak(story)
-	v.add_child(UI.button("هيا نبدأ", func():
-		_close_panel()
-		phase = "play"))
+	v.add_child(UI.button("هيا نبدأ", _on_start))
 	v.add_child(UI.button("الخريطة", func(): GameState.go("res://scenes/map.tscn"), Color("#8d99ae")))
 
 # ---------- اللعب ----------
 func _process(delta: float) -> void:
 	t += delta
+	world_back.focus = ppos
+	world_front.focus = ppos
+	point_t = maxf(0.0, point_t - delta)
 	dpad.visible = phase == "play"
 	if phase != "play":
 		pad_dir = Vector2.ZERO
@@ -309,6 +348,10 @@ func _process(delta: float) -> void:
 	var near_item := _nearest_item()
 	if act_t > 0.0:
 		_set_player_tex(act_tex)
+	elif point_t > 0.0 and look_item != null:
+		player.flip_h = look_item.position.x < ppos.x
+		_set_player_tex(point_tex)
+		bob = -4.0 * absf(sin(t * 7.0))
 	elif moving:
 		var nd := dirv.normalized()
 		if nd.y < -0.6 and absf(nd.x) < 0.55:
@@ -329,7 +372,7 @@ func _process(delta: float) -> void:
 	player.rotation = lean + shake_rot
 	player.scale = Vector2(base_k * (1.0 + sq), base_k * (1.0 - sq))
 	player.position = ppos + Vector2(0.0, bob + hop_y)
-	shadow.position = ppos + Vector2(0.0, 112.0)
+	shadow.position = ppos + Vector2(0.0, 98.0)
 	inv = maxf(0.0, inv - delta)
 	if inv > 1.2:
 		player.modulate = Color(1.0, 0.55, 0.55, 1.0)
@@ -337,9 +380,14 @@ func _process(delta: float) -> void:
 		player.modulate = Color(1, 1, 1, 0.4 if (inv > 0.0 and int(t * 10.0) % 2 == 0) else 1.0)
 	# --- الجراثيم ---
 	var near := 9999.0
-	for h in hazards:
+	for hi in hazards.size():
+		var h: Dictionary = hazards[hi]
+		if not hazards_on:
+			continue
 		var n: Sprite2D = h["node"]
 		var vel: Vector2 = h["vel"]
+		if hi % 2 == 1:
+			vel = vel.rotated(0.9 * sin(t * 2.0 + float(hi)) * delta)
 		n.position += vel * delta
 		if n.position.x < 50.0 or n.position.x > vp.x - 50.0:
 			vel.x = -vel.x
@@ -349,6 +397,7 @@ func _process(delta: float) -> void:
 			n.position.y = clampf(n.position.y, 160.0, vp.y - 60.0)
 		h["vel"] = vel
 		n.rotation = 0.15 * sin(t * 3.0 + n.position.x)
+		n.flip_h = vel.x < 0.0
 		n.scale = Vector2.ONE * float(n.get_meta("s")) * (1.0 + 0.06 * sin(t * 6.0 + n.position.x))
 		var dist := n.position.distance_to(ppos)
 		near = minf(near, dist)
@@ -370,19 +419,33 @@ func _process(delta: float) -> void:
 		if not it["got"]:
 			all = false
 			var nn: Node2D = it["node"]
-			nn.position.y = float(it["base"].y) + 7.0 * sin(t * 3.0 + float(it["base"].x))
+			var rr: float = float(it["r"])
+			var dd := nn.position.distance_to(ppos)
+			nn.position.y = float(it["base"].y) + 5.0 * sin(t * 3.0 + float(it["base"].x))
 			var hl: Sprite2D = it["halo"]
-			hl.modulate.a = 0.35 + 0.25 * sin(t * 5.0)
-			hl.scale = Vector2.ONE * (180.0 / 128.0) * (1.0 + 0.08 * sin(t * 5.0))
-			if nn.position.distance_to(ppos) < 100.0:
+			hl.modulate.a = 0.25 + 0.2 * sin(t * 5.0)
+			hl.scale = Vector2.ONE * float(it["hs"]) * (1.0 + 0.06 * sin(t * 5.0))
+			if it["fx"] != null:
+				(it["fx"] as OrganelleFX).boost = clampf(1.0 - (dd - rr) / 300.0, 0.0, 1.0)
+			if GameState.selected_level == 1 and HINTS.has(it["name"]) and not hints_seen.has(it["name"]) and dd < rr + 280.0:
+				hints_seen[it["name"]] = true
+				_say(str(HINTS[it["name"]]), 3.2)
+				look_item = nn
+				point_t = 1.0
+				_hop()
+			if dd < rr * 0.55 + 55.0:
 				it["got"] = true
 				_pop(nn)
+				_burst(nn.position, rr)
 				score += 100
+				collected += 1
 				GameState.sfx("collect")
 				act_t = 0.6
 				_hop()
 				_update_hud()
-				_learn(it["name"])
+				_say_fact(it["name"])
+				if collected == 2 and GameState.selected_level == 1 and not hazards_on:
+					_activate_hazards()
 	if all and not items.is_empty():
 		_after_collect()
 
@@ -670,7 +733,7 @@ func _fallback() -> Dictionary:
 
 func _set_player_tex(tex: Texture2D) -> void:
 	player.texture = tex
-	base_k = 230.0 / idle_tex.get_height()
+	base_k = 200.0 / idle_tex.get_height()
 	player.scale = Vector2.ONE * base_k
 	player.offset = Vector2(0.0, (idle_tex.get_height() - tex.get_height()) / 2.0)
 
@@ -705,3 +768,72 @@ func _toast(text: String) -> void:
 	var tw := create_tween()
 	tw.tween_interval(4.0)
 	tw.tween_callback(pc.queue_free)
+
+func _on_start() -> void:
+	_close_panel()
+	phase = "play"
+	if GameState.selected_level == 1:
+		_say("ما أجمل هذا العالم الصغير! لنستكشف الخلية…", 3.5)
+
+# فقاعة قصيرة لا توقف اللعب
+func _say(text: String, secs := 3.0) -> void:
+	if toast and is_instance_valid(toast):
+		toast.queue_free()
+	var pc := PanelContainer.new()
+	pc.layout_direction = Control.LAYOUT_DIRECTION_RTL
+	pc.anchor_left = 0.0
+	pc.anchor_right = 1.0
+	pc.anchor_top = 0.0
+	pc.anchor_bottom = 0.0
+	pc.offset_left = 24.0
+	pc.offset_right = -24.0
+	pc.offset_top = 112.0
+	pc.offset_bottom = 112.0
+	pc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sb := UI.holo_style()
+	sb.set_corner_radius_all(30)
+	sb.set_content_margin_all(16)
+	sb.bg_color = Color(0.07, 0.09, 0.28, 0.82)
+	pc.add_theme_stylebox_override("panel", sb)
+	var l := UI.glow_label(text, 28)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pc.add_child(l)
+	ui_layer.add_child(pc)
+	toast = pc
+	pc.modulate.a = 0.0
+	var tw := create_tween()
+	tw.tween_property(pc, "modulate:a", 1.0, 0.2)
+	tw.tween_interval(secs)
+	tw.tween_property(pc, "modulate:a", 0.0, 0.3)
+	tw.tween_callback(pc.queue_free)
+
+func _say_fact(nm: String) -> void:
+	var texts: Dictionary = learn.get(str(GameState.selected_level), {})
+	var txt := str(texts.get(nm, ""))
+	if txt == "":
+		return
+	_say("%s: %s" % [nm, txt], 7.0)
+	GameState.speak(txt)
+
+func _burst(p: Vector2, r: float) -> void:
+	var b := OrganelleFX.new()
+	b.kind = "burst"
+	b.r = r
+	b.position = p
+	world.add_child(b)
+	b.celebrate()
+
+func _activate_hazards() -> void:
+	hazards_on = true
+	_say("إنذار! جراثيم تحاول تعطيل عمل الخلية!", 3.5)
+	GameState.sfx("hit")
+	var vp := get_viewport_rect().size
+	var sp := 110.0 + 25.0 * int(lv.get("difficulty", 1))
+	for i in hazards.size():
+		var h: Dictionary = hazards[i]
+		var n: Sprite2D = h["node"]
+		n.position = Vector2(vp.x * (0.1 if i % 2 == 0 else 0.9), vp.y * 0.2 + float(i) * 120.0)
+		n.visible = true
+		n.modulate.a = 0.0
+		create_tween().tween_property(n, "modulate:a", 1.0, 0.6)
+		h["vel"] = Vector2(1.0 if i % 2 == 0 else -1.0, 0.5).normalized() * sp
