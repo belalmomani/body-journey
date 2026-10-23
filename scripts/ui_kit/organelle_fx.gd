@@ -6,6 +6,7 @@ var r := 100.0
 var boost := 0.0
 var t := 0.0
 var cel := 0.0
+var formed := false   # للخلية البدائية: بعد تكوّن غشاء النواة
 
 func celebrate() -> void:
 	cel = 0.9
@@ -71,6 +72,21 @@ func _draw() -> void:
 			var p := fmod(t * 0.35 + float(i) * 0.2, 1.0)
 			var x := lerpf(-r * 0.6, r * 0.6, float(i) / 4.0)
 			draw_circle(Vector2(x, lerpf(-r * 0.45, r * 0.45, p)), 5.0, Color(0.9, 1.0, 0.8, sin(p * PI) * k))
+	elif kind == "prokaryote":
+		# خلية بدائية: جدار، مادة وراثية حرّة (حلقة)، ريبوسومات صغيرة، بلا نواة
+		_capsule(r, r * 0.55, Color(0.6, 0.95, 0.8, 0.35), Color(0.45, 0.85, 0.7, 0.9))
+		var pts := PackedVector2Array()
+		for i in 41:
+			var a := TAU * float(i) / 40.0
+			var rad := r * 0.22 * (1.0 + 0.12 * sin(a * 5.0 + t * 1.2))
+			pts.append(Vector2(cos(a), sin(a)) * rad + Vector2(0.0, 10.0))
+		draw_polyline(pts, Color(0.95, 0.5, 0.9, 0.95), 5.0, true)
+		for i in 14:
+			var rp := Vector2(cos(float(i) * 2.3) * r * 0.75, sin(float(i) * 1.7) * r * 0.3) + Vector2(sin(t + float(i)) * 4.0, cos(t * 0.8 + float(i)) * 4.0)
+			draw_circle(rp, 4.0, Color(0.9, 0.8, 0.3, 0.8))
+		if formed:
+			draw_circle(Vector2(0.0, 10.0), r * 0.34, Color(0.8, 0.6, 1.0, 0.15))
+			draw_arc(Vector2(0.0, 10.0), r * 0.34, 0.0, TAU, 48, Color(0.8, 0.6, 1.0, 0.9), 6.0, true)
 	elif kind == "burst":
 		var q := 1.0 - cel / 0.9
 		for j in 2:
@@ -78,3 +94,17 @@ func _draw() -> void:
 		for i in 10:
 			var d := Vector2.from_angle(float(i) * TAU / 10.0)
 			_spark(d * r * (0.4 + q * 1.4), 7.0 * (1.0 - q * 0.5), Color(1.0, 0.95, 0.4, 1.0 - q))
+
+func _capsule(half_len: float, half_h: float, fill: Color, edge: Color) -> void:
+	var pts := PackedVector2Array()
+	var cl := half_len - half_h
+	for i in 25:
+		var a := -PI / 2.0 + PI * float(i) / 24.0
+		pts.append(Vector2(cl + cos(a) * half_h, sin(a) * half_h))
+	for i in 25:
+		var a2 := PI / 2.0 + PI * float(i) / 24.0
+		pts.append(Vector2(-cl + cos(a2) * half_h, sin(a2) * half_h))
+	draw_colored_polygon(pts, fill)
+	pts.append(pts[0])
+	draw_polyline(pts, Color(edge.r, edge.g, edge.b, 0.35), 18.0, true)
+	draw_polyline(pts, edge, 8.0, true)

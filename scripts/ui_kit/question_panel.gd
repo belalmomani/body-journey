@@ -3,6 +3,8 @@ extends PanelContainer
 # لوحة سؤال «هولوغرافية» قابلة لإعادة الاستخدام في كل المراحل.
 signal answered(ok: bool, q: Dictionary)
 signal next_pressed
+signal skip_pressed
+var allow_skip := false
 const TINTS := [Color("#7fe3ff"), Color("#b69cff"), Color("#ffd27f"), Color("#8dffb0")]
 var q := {}
 var done := false
@@ -70,6 +72,8 @@ func build(question: Dictionary, idx: int, total: int, score: int, level_id: int
 	feedback_box.add_child(expl_label)
 	feedback_box.add_child(UI.button("إنهاء الاختبار" if is_last else "السؤال التالي", func(): next_pressed.emit(), Color("#2a9d8f")))
 	v.add_child(feedback_box)
+	if allow_skip:
+		v.add_child(UI.button("تخطي الأسئلة", func(): skip_pressed.emit(), Color("#8d99ae")))
 
 func set_score(n: int) -> void:
 	score_label.text = "النقاط: %d" % n

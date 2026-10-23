@@ -1,7 +1,7 @@
 extends Control
 # محرك مرحلة عام. عالم اللعب من Node2D/Sprite2D (لا يتأثر باتجاه الواجهة RTL)، والواجهة في CanvasLayer.
 const SPEED := 400.0
-const BUILD := "v11"
+const BUILD := "v12"
 const ITEM_TEX := {
 	"النواة": "res://assets/cell/nucleus.png",
 	"الميتوكوندريا": "res://assets/cell/mito.png",
@@ -54,6 +54,26 @@ var hints_seen := {}
 var point_t := 0.0
 var look_item: Node2D
 var collected := 0
+signal story_target_got(nm: String)
+signal quiz_done
+var story_mode := false
+var story := {}
+var story_pose := "idle"
+var chapter_title := ""
+var dlg: DialogueBox
+var mission_panel: PanelContainer
+var mission_label: Label
+var arrow: GuideArrow
+var mission_targets: Array = []
+var mission_idle := 0.0
+var discovered: Array = []
+var story_done := false
+var env := "cell"
+var prok: OrganelleFX
+var bg_node: TextureRect
+var backdrop: Control
+var backdrop_hero: TextureRect
+var portraits := {}
 var stories := {}
 var items: Array = []
 var hazards: Array = []
@@ -94,6 +114,7 @@ func _ready() -> void:
 		lv = _fallback()
 		src = "fallback"
 	rng.seed = GameState.selected_level * 7919
+	story_mode = GameState.selected_level == 1 and FileAccess.file_exists("res://data/story_level1.json")
 	var bg := TextureRect.new()
 	bg.texture = load("res://assets/backgrounds/bg_cell_deep.png")
 	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -102,6 +123,7 @@ func _ready() -> void:
 	bg.modulate = Color.WHITE if GameState.selected_level == 1 else Color(lv.get("color", "#ffffff")).lerp(Color.WHITE, 0.6)
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(bg)
+	bg_node = bg
 	world = Node2D.new()
 	add_child(world)
 	var vps := get_viewport_rect().size
@@ -145,7 +167,9 @@ func _ready() -> void:
 		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		n.add_child(l)
 		world.add_child(n)
-		items.append({"node": n, "name": nm, "got": false, "halo": halo, "base": n.position, "fx": fxn, "r": bs * 0.5, "hs": (bs * 1.5) / 128.0})
+		if story_mode:
+			n.visible = false
+		items.append({"node": n, "name": nm, "got": false, "halo": halo, "base": n.position, "fx": fxn, "r": bs * 0.5, "hs": (bs * 1.5) / 128.0, "active": not story_mode, "label": l})
 	var germ_tex: Array = [load("res://assets/enemies/virus.png"), load("res://assets/enemies/bact.png")]
 	for i in int(lv.get("hazards", 2)):
 		var h := Sprite2D.new()
@@ -235,13 +259,50 @@ func _ready() -> void:
 	dpad.offset_bottom = -40.0
 	dpad.dir_changed.connect(func(d: Vector2): pad_dir = d)
 	ui_layer.add_child(dpad)
+	arrow = GuideArrow.new()
+	arrow.visible = false
+	world.add_child(arrow)
+	portraits = {"رائد": load("res://assets/characters/hero/hero_idle.png"), "نبض": load("res://assets/characters/guide.svg")}
+	mission_panel = PanelContainer.new()
+	mission_panel.layout_direction = Control.LAYOUT_DIRECTION_RTL
+	mission_panel.anchor_left = 0.0
+	mission_panel.anchor_right = 1.0
+	mission_panel.offset_left = 24.0
+	mission_panel.offset_right = -24.0
+	mission_panel.offset_top = 108.0
+	mission_panel.offset_bottom = 108.0
+	mission_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var msb := UI.holo_style()
+	msb.set_corner_radius_all(24)
+	msb.set_content_margin_all(10)
+	mission_panel.add_theme_stylebox_override("panel", msb)
+	mission_label = UI.glow_label("", 28, Color("#ffe27a"))
+	mission_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mission_panel.add_child(mission_label)
+	mission_panel.visible = false
+	ui_layer.add_child(mission_panel)
+	dlg = DialogueBox.new()
+	dlg.anchor_left = 0.0
+	dlg.anchor_right = 1.0
+	dlg.anchor_top = 0.62
+	dlg.anchor_bottom = 1.0
+	dlg.offset_left = 20.0
+	dlg.offset_right = -20.0
+	dlg.offset_top = 0.0
+	dlg.offset_bottom = -20.0
+	dlg.visible = false
+	ui_layer.add_child(dlg)
+	dlg.line_shown.connect(_on_line)
 	overlay = Control.new()
 	overlay.layout_direction = Control.LAYOUT_DIRECTION_RTL
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ui_layer.add_child(overlay)
 	_update_hud()
-	_show_intro()
+	if story_mode:
+		_begin_story()
+	else:
+		_show_intro()
 
 func _free_spot() -> Vector2:
 	for k in 40:
@@ -255,6 +316,9 @@ func _free_spot() -> Vector2:
 	return Vector2(360, 600)
 
 func _update_hud() -> void:
+	if story_mode:
+		hud.text = "%s  |  المكتشف: %d/6  |  النقاط: %d" % [chapter_title if chapter_title != "" else str(lv.get("title", "")), discovered.size(), score]
+		return
 	var got := 0
 	for it in items:
 		if it["got"]:
@@ -319,6 +383,8 @@ func _process(delta: float) -> void:
 	dpad.visible = phase == "play"
 	if phase != "play":
 		pad_dir = Vector2.ZERO
+		if phase == "story":
+			_story_anim(delta)
 		return
 	AdManager.add_play_time(delta)
 	act_t = maxf(0.0, act_t - delta)
@@ -409,8 +475,12 @@ func _process(delta: float) -> void:
 			_shake()
 			_update_hud()
 			if hearts <= 0:
-				_fail()
-				return
+				if story_mode:
+					hearts = 3
+					_say("لا بأس يا رائد! ابتعد عن الجراثيم، وسأبقى أرشدك.", 3.5)
+				else:
+					_fail()
+					return
 	alert.visible = near < 230.0 and inv <= 0.0
 	alert.position = ppos + Vector2(-14.0, -230.0 + 5.0 * sin(t * 12.0))
 	# --- العناصر ---
@@ -418,6 +488,8 @@ func _process(delta: float) -> void:
 	for it in items:
 		if not it["got"]:
 			all = false
+			if not it.get("active", true):
+				continue
 			var nn: Node2D = it["node"]
 			var rr: float = float(it["r"])
 			var dd := nn.position.distance_to(ppos)
@@ -427,7 +499,7 @@ func _process(delta: float) -> void:
 			hl.scale = Vector2.ONE * float(it["hs"]) * (1.0 + 0.06 * sin(t * 5.0))
 			if it["fx"] != null:
 				(it["fx"] as OrganelleFX).boost = clampf(1.0 - (dd - rr) / 300.0, 0.0, 1.0)
-			if GameState.selected_level == 1 and HINTS.has(it["name"]) and not hints_seen.has(it["name"]) and dd < rr + 280.0:
+			if GameState.selected_level == 1 and not story_mode and HINTS.has(it["name"]) and not hints_seen.has(it["name"]) and dd < rr + 280.0:
 				hints_seen[it["name"]] = true
 				_say(str(HINTS[it["name"]]), 3.2)
 				look_item = nn
@@ -435,25 +507,37 @@ func _process(delta: float) -> void:
 				_hop()
 			if dd < rr * 0.55 + 55.0:
 				it["got"] = true
-				_pop(nn)
-				_burst(nn.position, rr)
 				score += 100
-				collected += 1
 				GameState.sfx("collect")
 				act_t = 0.6
 				_hop()
-				_update_hud()
-				_say_fact(it["name"])
-				if collected == 2 and GameState.selected_level == 1 and not hazards_on:
-					_activate_hazards()
-	if all and not items.is_empty():
+				_burst(nn.position, rr)
+				if story_mode:
+					(it["halo"] as Sprite2D).visible = false
+					(it["label"] as Label).modulate = Color(0.6, 1.0, 0.7)
+					mission_idle = 0.0
+					if not it.get("dyn", false):
+						discovered.append(it["name"])
+						collected += 1
+					_cam_pulse(nn.position)
+					_update_hud()
+					story_target_got.emit(it["name"])
+				else:
+					collected += 1
+					_pop(nn)
+					_update_hud()
+					_say_fact(it["name"])
+					if collected == 2 and GameState.selected_level == 1 and not hazards_on:
+						_activate_hazards()
+	_mission_tick(delta)
+	if all and not items.is_empty() and not story_mode:
 		_after_collect()
 
 func _nearest_item() -> Node2D:
 	var best: Node2D = null
 	var bd := 1.0e9
 	for it in items:
-		if not it["got"]:
+		if not it["got"] and it.get("active", true):
 			var n: Node2D = it["node"]
 			var d := n.position.distance_to(ppos)
 			if d < bd:
@@ -540,7 +624,10 @@ func _start_quiz() -> void:
 func _ask() -> void:
 	var qs: Array = lv.get("questions", [])
 	if qi >= qs.size():
-		_finish()
+		if story_mode:
+			_story_quiz_end()
+		else:
+			_finish()
 		return
 	var q: Dictionary = (qs[qi] as Dictionary).duplicate()
 	if str(q.get("explain", "")) == "":
@@ -553,6 +640,7 @@ func _ask() -> void:
 	player.rotation = 0.0
 	_set_player_tex(idle_tex)
 	qpanel = QuestionPanel.new()
+	qpanel.allow_skip = story_mode
 	qpanel.set_anchors_preset(Control.PRESET_FULL_RECT)
 	qpanel.anchor_top = 0.36
 	qpanel.offset_left = 24.0
@@ -562,6 +650,7 @@ func _ask() -> void:
 	overlay.add_child(qpanel)
 	qpanel.build(q, qi, qs.size(), score, GameState.selected_level)
 	qpanel.answered.connect(_on_answered)
+	qpanel.skip_pressed.connect(_story_quiz_end)
 	qpanel.next_pressed.connect(func():
 		qi += 1
 		_ask())
@@ -787,8 +876,9 @@ func _say(text: String, secs := 3.0) -> void:
 	pc.anchor_bottom = 0.0
 	pc.offset_left = 24.0
 	pc.offset_right = -24.0
-	pc.offset_top = 112.0
-	pc.offset_bottom = 112.0
+	var top := 190.0 if story_mode else 112.0
+	pc.offset_top = top
+	pc.offset_bottom = top
 	pc.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var sb := UI.holo_style()
 	sb.set_corner_radius_all(30)
@@ -823,9 +913,10 @@ func _burst(p: Vector2, r: float) -> void:
 	world.add_child(b)
 	b.celebrate()
 
-func _activate_hazards() -> void:
+func _activate_hazards(announce := true) -> void:
 	hazards_on = true
-	_say("إنذار! جراثيم تحاول تعطيل عمل الخلية!", 3.5)
+	if announce:
+		_say("إنذار! جراثيم تحاول تعطيل عمل الخلية!", 3.5)
 	GameState.sfx("hit")
 	var vp := get_viewport_rect().size
 	var sp := 110.0 + 25.0 * int(lv.get("difficulty", 1))
@@ -837,3 +928,400 @@ func _activate_hazards() -> void:
 		n.modulate.a = 0.0
 		create_tween().tween_property(n, "modulate:a", 1.0, 0.6)
 		h["vel"] = Vector2(1.0 if i % 2 == 0 else -1.0, 0.5).normalized() * sp
+
+# ====================== محرك القصة (المرحلة الأولى) ======================
+func _load_json(path: String) -> Dictionary:
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f:
+		var j = JSON.parse_string(f.get_as_text())
+		if j is Dictionary:
+			return j
+	return {}
+
+func _begin_story() -> void:
+	phase = "story"
+	var st: Dictionary = GameState.data.get("story", {})
+	var cp := int(st.get("l1", 0))
+	if cp > 1:
+		var v := _panel("متابعة الرحلة", "وصلتَ سابقاً إلى الجزء %d. هل تتابع من هناك؟" % cp)
+		var go_on := func():
+			_close_panel()
+			_run_story(cp)
+		var go_new := func():
+			_close_panel()
+			_run_story(1)
+		v.add_child(UI.button("متابعة من الجزء %d" % cp, go_on, Color("#2a9d8f")))
+		v.add_child(UI.button("من البداية", go_new, Color("#6c63ff")))
+	else:
+		_run_story(1)
+
+func _run_story(start_ch: int) -> void:
+	story = _load_json("res://data/story_level1.json")
+	if start_ch >= 3:
+		_story_restore_discovered()
+	for ch in story.get("chapters", []):
+		if int(ch["id"]) < start_ch:
+			continue
+		for step in ch["steps"]:
+			await _do_step(step)
+
+func _story_restore_discovered() -> void:
+	for it in items:
+		if it.get("dyn", false):
+			continue
+		it["active"] = true
+		it["got"] = true
+		(it["node"] as Node2D).visible = true
+		(it["halo"] as Sprite2D).visible = false
+		(it["label"] as Label).modulate = Color(0.6, 1.0, 0.7)
+		if not discovered.has(it["name"]):
+			discovered.append(it["name"])
+	collected = discovered.size()
+	_update_hud()
+
+func _do_step(step: Dictionary) -> void:
+	var kind := str(step["t"])
+	if kind == "checkpoint":
+		chapter_title = str(step.get("title", ""))
+		GameState.data["story"] = {"l1": int(step["ch"])}
+		GameState.save_local()
+		_update_hud()
+	elif kind == "card":
+		await _card(str(step["text"]), float(step.get("secs", 2.0)), str(step.get("style", "title")), str(step.get("env", "")))
+	elif kind == "say":
+		if str(step.get("scene", "")) == "lab":
+			_set_backdrop()
+		await _say_lines(step["lines"])
+	elif kind == "shrink":
+		await _shrink_cutscene()
+	elif kind == "show":
+		_story_show(step["names"])
+	elif kind == "mission":
+		await _mission(step)
+	elif kind == "hazards":
+		if bool(step["on"]):
+			_activate_hazards(false)
+		else:
+			hazards_on = false
+			for h in hazards:
+				(h["node"] as Sprite2D).visible = false
+	elif kind == "form_nucleus":
+		_form_nucleus()
+	elif kind == "quiz":
+		await _story_quiz()
+	elif kind == "end":
+		_story_end()
+
+func _say_lines(lines: Array) -> void:
+	phase = "story"
+	pad_dir = Vector2.ZERO
+	dlg.play(lines, portraits)
+	await dlg.finished
+	story_pose = "idle"
+
+func _on_line(line: Dictionary) -> void:
+	var pose := str(line.get("pose", ""))
+	if str(line.get("who", "")) == "رائد" and pose != "":
+		story_pose = pose
+		if pose == "joy":
+			_hop()
+	else:
+		story_pose = "idle"
+
+func _story_anim(delta: float) -> void:
+	act_t = maxf(0.0, act_t - delta)
+	var bob := 2.0 * sin(t * 2.4)
+	var sq := 0.012 * sin(t * 2.4)
+	if story_pose == "joy" or act_t > 0.0:
+		_set_player_tex(act_tex)
+		bob = -4.0 * absf(sin(t * 6.0))
+	elif story_pose == "point":
+		_set_player_tex(point_tex)
+	else:
+		_set_player_tex(idle_tex)
+	player.rotation = shake_rot
+	player.scale = Vector2(base_k * (1.0 + sq), base_k * (1.0 - sq))
+	player.position = ppos + Vector2(0.0, bob + hop_y)
+	shadow.position = ppos + Vector2(0.0, 98.0)
+
+func _card(text: String, secs: float, style: String, env_name: String) -> void:
+	phase = "story"
+	var c := ColorRect.new()
+	c.color = Color(0.03, 0.04, 0.16, 0.97) if style == "title" else Color(0.12, 0.06, 0.2, 0.97)
+	c.set_anchors_preset(Control.PRESET_FULL_RECT)
+	c.mouse_filter = Control.MOUSE_FILTER_STOP
+	c.modulate.a = 0.0
+	var l := UI.glow_label(text, 52)
+	l.set_anchors_preset(Control.PRESET_FULL_RECT)
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	c.add_child(l)
+	ui_layer.add_child(c)
+	var tw := create_tween()
+	tw.tween_property(c, "modulate:a", 1.0, 0.4)
+	await tw.finished
+	if env_name != "":
+		_set_env(env_name)
+	await get_tree().create_timer(secs).timeout
+	var tw2 := create_tween()
+	tw2.tween_property(c, "modulate:a", 0.0, 0.4)
+	await tw2.finished
+	c.queue_free()
+
+func _set_backdrop() -> void:
+	if backdrop != null and is_instance_valid(backdrop):
+		return
+	var b := ColorRect.new()
+	b.color = Color(0.04, 0.08, 0.2, 1.0)
+	b.set_anchors_preset(Control.PRESET_FULL_RECT)
+	b.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	backdrop_hero = TextureRect.new()
+	backdrop_hero.texture = idle_tex
+	backdrop_hero.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	backdrop_hero.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	backdrop_hero.anchor_left = 0.5
+	backdrop_hero.anchor_right = 0.5
+	backdrop_hero.anchor_top = 0.12
+	backdrop_hero.anchor_bottom = 0.12
+	backdrop_hero.offset_left = -130.0
+	backdrop_hero.offset_right = 130.0
+	backdrop_hero.offset_top = 0.0
+	backdrop_hero.offset_bottom = 360.0
+	b.add_child(backdrop_hero)
+	ui_layer.add_child(b)
+	ui_layer.move_child(b, 0)
+	backdrop = b
+
+func _clear_backdrop() -> void:
+	if backdrop != null and is_instance_valid(backdrop):
+		backdrop.queue_free()
+	backdrop = null
+	backdrop_hero = null
+
+func _shrink_cutscene() -> void:
+	phase = "story"
+	if backdrop == null or not is_instance_valid(backdrop):
+		_set_backdrop()
+	backdrop_hero.pivot_offset = Vector2(130.0, 180.0)
+	var tw := create_tween()
+	tw.tween_property(backdrop_hero, "scale", Vector2(0.04, 0.04), 1.5)
+	tw.parallel().tween_property(backdrop_hero, "rotation", TAU * 2.0, 1.5)
+	await tw.finished
+	var flash := ColorRect.new()
+	flash.color = Color.WHITE
+	flash.set_anchors_preset(Control.PRESET_FULL_RECT)
+	flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	flash.modulate.a = 0.0
+	ui_layer.add_child(flash)
+	var tw2 := create_tween()
+	tw2.tween_property(flash, "modulate:a", 1.0, 0.35)
+	await tw2.finished
+	_clear_backdrop()
+	var tw3 := create_tween()
+	tw3.tween_property(flash, "modulate:a", 0.0, 0.5)
+	await tw3.finished
+	flash.queue_free()
+
+func _story_show(names: Array) -> void:
+	var first := true
+	for it in items:
+		if names.has(it["name"]):
+			it["active"] = true
+			var n: Node2D = it["node"]
+			n.visible = true
+			n.modulate.a = 0.0
+			create_tween().tween_property(n, "modulate:a", 1.0, 0.7)
+			if first:
+				first = false
+				_cam_pulse(n.position)
+
+func _mission(step: Dictionary) -> void:
+	phase = "play"
+	mission_targets = step["targets"]
+	mission_idle = 0.0
+	mission_label.text = "المهمة: " + str(step["text"])
+	mission_panel.visible = true
+	await _wait_targets(mission_targets)
+	mission_targets = []
+	arrow.visible = false
+	mission_panel.visible = false
+	phase = "story"
+	pad_dir = Vector2.ZERO
+
+func _wait_targets(targets: Array) -> void:
+	while true:
+		var remaining := 0
+		for it in items:
+			if targets.has(it["name"]) and not it["got"]:
+				remaining += 1
+		if remaining == 0:
+			return
+		await story_target_got
+
+func _mission_tick(delta: float) -> void:
+	if mission_targets.is_empty():
+		return
+	mission_idle += delta
+	var best: Node2D = null
+	var bd := 1.0e9
+	for it in items:
+		if mission_targets.has(it["name"]) and not it["got"]:
+			var n: Node2D = it["node"]
+			var d := n.position.distance_to(ppos)
+			if d < bd:
+				bd = d
+				best = n
+	if best == null:
+		arrow.visible = false
+		return
+	var dir := (best.position - ppos).normalized()
+	arrow.visible = bd > 230.0
+	arrow.position = ppos + dir * 150.0
+	arrow.rotation = dir.angle()
+	if mission_idle > 25.0:
+		mission_idle = 0.0
+		_say("تلميح: اتبع السهم الأصفر نحو الهدف.", 3.5)
+
+func _cam_pulse(p: Vector2) -> void:
+	var s := 1.12
+	var tw := create_tween()
+	tw.tween_property(world, "scale", Vector2(s, s), 0.4)
+	tw.parallel().tween_property(world, "position", p * (1.0 - s), 0.4)
+	tw.tween_interval(0.35)
+	tw.tween_property(world, "scale", Vector2.ONE, 0.5)
+	tw.parallel().tween_property(world, "position", Vector2.ZERO, 0.5)
+
+func _set_env(nm: String) -> void:
+	env = nm
+	var vp := get_viewport_rect().size
+	if prok != null and is_instance_valid(prok):
+		prok.queue_free()
+		prok = null
+	var keep: Array = []
+	for it in items:
+		if it.get("dyn", false):
+			(it["node"] as Node2D).queue_free()
+		else:
+			keep.append(it)
+	items = keep
+	if nm == "cell":
+		bg_node.modulate = Color.WHITE
+		for it in items:
+			if it["got"]:
+				(it["node"] as Node2D).visible = true
+		return
+	bg_node.modulate = Color(0.75, 1.0, 0.9)
+	for it in items:
+		(it["node"] as Node2D).visible = false
+	prok = OrganelleFX.new()
+	prok.kind = "prokaryote"
+	prok.r = 250.0
+	prok.position = Vector2(vp.x * 0.5, vp.y * 0.42)
+	world.add_child(prok)
+	world.move_child(prok, 1)
+	var c := prok.position
+	if nm == "primitive":
+		_add_item_dyn("المادة الوراثية الحرة", c + Vector2(0.0, 10.0), 110.0)
+	elif nm == "forming":
+		_add_item_dyn("طية غشاء ١", c + Vector2(-190.0, -70.0), 100.0)
+		_add_item_dyn("طية غشاء ٢", c + Vector2(190.0, -70.0), 100.0)
+		_add_item_dyn("طية غشاء ٣", c + Vector2(0.0, 130.0), 100.0)
+
+func _add_item_dyn(nm: String, pos: Vector2, bs: float) -> void:
+	var n := Node2D.new()
+	n.position = pos
+	n.visible = false
+	var tex: Texture2D = load("res://assets/characters/item.svg")
+	var halo := Sprite2D.new()
+	halo.texture = tex
+	halo.scale = Vector2.ONE * ((bs * 1.5) / 128.0)
+	halo.modulate = Color(1, 0.9, 0.2, 0.4)
+	n.add_child(halo)
+	var body := Sprite2D.new()
+	body.texture = tex
+	body.scale = Vector2.ONE * (bs / 128.0)
+	n.add_child(body)
+	var l := UI.label(nm, 24)
+	l.size = Vector2(200, 32)
+	l.position = Vector2(-100, bs * 0.5 + 8.0)
+	l.add_theme_color_override("font_color", Color.WHITE)
+	l.add_theme_color_override("font_outline_color", Color("#3b1a5a"))
+	l.add_theme_constant_override("outline_size", 8)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	n.add_child(l)
+	world.add_child(n)
+	items.append({"node": n, "name": nm, "got": false, "halo": halo, "base": n.position, "fx": null, "r": bs * 0.5, "hs": (bs * 1.5) / 128.0, "dyn": true, "active": false, "label": l})
+
+func _form_nucleus() -> void:
+	if prok != null and is_instance_valid(prok):
+		prok.formed = true
+		_burst(prok.position + Vector2(0.0, 10.0), 150.0)
+		_cam_pulse(prok.position)
+	GameState.sfx("win")
+
+func _story_quiz() -> void:
+	qok = 0
+	_start_quiz()
+	await quiz_done
+	var vp := get_viewport_rect().size
+	ppos = Vector2(vp.x * 0.62, vp.y * 0.8)
+	player.position = ppos
+
+func _story_quiz_end() -> void:
+	for c in overlay.get_children():
+		c.queue_free()
+	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	phase = "story"
+	quiz_done.emit()
+
+func _story_end() -> void:
+	phase = "result"
+	_clear_backdrop()
+	var stars := 1
+	if discovered.size() >= 6:
+		stars = 2
+		if qok >= 4:
+			stars = 3
+	if not story_done:
+		story_done = true
+		GameState.data["story"] = {"l1": 0}
+		GameState.complete_level(GameState.selected_level, stars, score)
+		GameState.sfx("win")
+	_end_panel(stars)
+
+func _end_panel(stars: int) -> void:
+	var names := PackedStringArray()
+	for n in discovered:
+		names.append(str(n))
+	var v := _panel("اكتملت الرحلة!", "النجوم: %d من 3\nالنقاط: %d\nاكتشفتَ: %s" % [stars, score, "، ".join(names)])
+	var replay_all := func():
+		GameState.data["story"] = {"l1": 1}
+		GameState.save_local()
+		GameState.go("res://scenes/level.tscn")
+	var replay_part := func():
+		GameState.data["story"] = {"l1": 2}
+		GameState.save_local()
+		GameState.go("res://scenes/level.tscn")
+	var go_map := func():
+		AdManager.maybe_show(func(): GameState.go("res://scenes/map.tscn"))
+	var review := func(): _review_panel(stars)
+	v.add_child(UI.button("مراجعة المعلومات", review, Color("#6c63ff")))
+	v.add_child(UI.button("إعادة مشاهدة المشاهد", replay_all, Color("#2a9d8f")))
+	v.add_child(UI.button("إعادة لعب الجزء الثاني", replay_part, Color("#f4a261")))
+	v.add_child(UI.button("العودة إلى الخريطة", go_map, Color("#8d99ae")))
+
+func _review_panel(stars: int) -> void:
+	var v := _panel("ما اكتشفته", "")
+	var sc := ScrollContainer.new()
+	sc.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	var col := VBoxContainer.new()
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.add_theme_constant_override("separation", 14)
+	sc.add_child(col)
+	var texts: Dictionary = learn.get("1", {})
+	for n in discovered:
+		col.add_child(UI.glow_label("%s: %s" % [n, str(texts.get(n, ""))], 26))
+	v.add_child(sc)
+	var back := func(): _end_panel(stars)
+	v.add_child(UI.button("رجوع", back, Color("#8d99ae")))
