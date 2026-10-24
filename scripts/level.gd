@@ -1,7 +1,8 @@
 extends Control
 # محرك مرحلة عام. عالم اللعب من Node2D/Sprite2D (لا يتأثر باتجاه الواجهة RTL)، والواجهة في CanvasLayer.
 const SPEED := 400.0
-const BUILD := "v12"
+const BUILD := "v13"
+const ENV_TINT := {"artery": Color(1.0, 0.85, 0.55), "heart": Color(1.0, 0.6, 0.6), "capillary": Color(1.0, 0.75, 0.8), "lungs": Color(0.7, 0.9, 1.0)}
 const ITEM_TEX := {
 	"النواة": "res://assets/cell/nucleus.png",
 	"الميتوكوندريا": "res://assets/cell/mito.png",
@@ -74,6 +75,8 @@ var bg_node: TextureRect
 var backdrop: Control
 var backdrop_hero: TextureRect
 var portraits := {}
+var story_key := "l1"
+var story_goal := 6
 var stories := {}
 var items: Array = []
 var hazards: Array = []
@@ -114,13 +117,17 @@ func _ready() -> void:
 		lv = _fallback()
 		src = "fallback"
 	rng.seed = GameState.selected_level * 7919
-	story_mode = GameState.selected_level == 1 and FileAccess.file_exists("res://data/story_level1.json")
+	story_key = "l%d" % GameState.selected_level
+	story_mode = FileAccess.file_exists("res://data/story_level%d.json" % GameState.selected_level)
+	if story_mode:
+		story = _load_json("res://data/story_level%d.json" % GameState.selected_level)
+		story_goal = int(story.get("goal", 6))
 	var bg := TextureRect.new()
 	bg.texture = load("res://assets/backgrounds/bg_cell_deep.png")
 	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	bg.stretch_mode = TextureRect.STRETCH_SCALE
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bg.modulate = Color.WHITE if GameState.selected_level == 1 else Color(lv.get("color", "#ffffff")).lerp(Color.WHITE, 0.6)
+	bg.modulate = Color.WHITE if (GameState.selected_level == 1 or story_mode) else Color(lv.get("color", "#ffffff")).lerp(Color.WHITE, 0.6)
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(bg)
 	bg_node = bg
@@ -132,7 +139,10 @@ func _ready() -> void:
 	world.add_child(world_back)
 	world_back.setup("back", 46)
 	var tex_item: Texture2D = load("res://assets/characters/item.svg")
-	for nm in lv.get("items", []):
+	var base_items: Array = lv.get("items", [])
+	if story_mode and bool(story.get("spawn_only", false)):
+		base_items = []
+	for nm in base_items:
 		var n := Node2D.new()
 		if GameState.selected_level == 1 and ITEM_POS.has(nm):
 			n.position = Vector2(vps.x * float(ITEM_POS[nm].x), vps.y * float(ITEM_POS[nm].y))
@@ -171,6 +181,10 @@ func _ready() -> void:
 			n.visible = false
 		items.append({"node": n, "name": nm, "got": false, "halo": halo, "base": n.position, "fx": fxn, "r": bs * 0.5, "hs": (bs * 1.5) / 128.0, "active": not story_mode, "label": l})
 	var germ_tex: Array = [load("res://assets/enemies/virus.png"), load("res://assets/enemies/bact.png")]
+	if story_mode and story.has("hazard_tex"):
+		germ_tex = []
+		for pth in story["hazard_tex"]:
+			germ_tex.append(load(str(pth)))
 	for i in int(lv.get("hazards", 2)):
 		var h := Sprite2D.new()
 		var gt: Texture2D = germ_tex[i % 2]
@@ -178,12 +192,12 @@ func _ready() -> void:
 		h.set_meta("s", 120.0 / maxf(gt.get_width(), gt.get_height()))
 		h.scale = Vector2.ONE * float(h.get_meta("s"))
 		h.position = _free_spot()
-		if GameState.selected_level == 1:
+		if story_mode:
 			h.visible = false
 		world.add_child(h)
 		var sp := 110.0 + 25.0 * int(lv.get("difficulty", 1))
 		hazards.append({"node": h, "vel": Vector2.from_angle(rng.randf() * TAU) * sp})
-	hazards_on = GameState.selected_level != 1
+	hazards_on = not story_mode
 	idle_tex = load("res://assets/characters/hero/hero_idle.png")
 	act_tex = load("res://assets/characters/hero/hero_interact.png")
 	run_frames = [load("res://assets/characters/hero/hero_run.png"), load("res://assets/characters/hero/hero_walk.png")]
@@ -317,7 +331,7 @@ func _free_spot() -> Vector2:
 
 func _update_hud() -> void:
 	if story_mode:
-		hud.text = "%s  |  المكتشف: %d/6  |  النقاط: %d" % [chapter_title if chapter_title != "" else str(lv.get("title", "")), discovered.size(), score]
+		hud.text = "%s  |  المكتشف: %d/%d  |  النقاط: %d" % [chapter_title if chapter_title != "" else str(lv.get("title", "")), discovered.size(), story_goal, score]
 		return
 	var got := 0
 	for it in items:
@@ -492,6 +506,18 @@ func _process(delta: float) -> void:
 				continue
 			var nn: Node2D = it["node"]
 			var rr: float = float(it["r"])
+			if it.has("drift"):
+				var dv: Vector2 = it["drift"]
+				var bb: Vector2 = it["base"]
+				bb += dv * delta
+				if bb.x < 90.0 or bb.x > vp.x - 90.0:
+					dv.x = -dv.x
+				if bb.y < 250.0 or bb.y > vp.y * 0.7:
+					dv.y = -dv.y
+				bb = Vector2(clampf(bb.x, 90.0, vp.x - 90.0), clampf(bb.y, 250.0, vp.y * 0.7))
+				it["drift"] = dv
+				it["base"] = bb
+				nn.position.x = bb.x
 			var dd := nn.position.distance_to(ppos)
 			nn.position.y = float(it["base"].y) + 5.0 * sin(t * 3.0 + float(it["base"].x))
 			var hl: Sprite2D = it["halo"]
@@ -516,7 +542,7 @@ func _process(delta: float) -> void:
 					(it["halo"] as Sprite2D).visible = false
 					(it["label"] as Label).modulate = Color(0.6, 1.0, 0.7)
 					mission_idle = 0.0
-					if not it.get("dyn", false):
+					if it.get("counts", not it.get("dyn", false)):
 						discovered.append(it["name"])
 						collected += 1
 					_cam_pulse(nn.position)
@@ -941,7 +967,7 @@ func _load_json(path: String) -> Dictionary:
 func _begin_story() -> void:
 	phase = "story"
 	var st: Dictionary = GameState.data.get("story", {})
-	var cp := int(st.get("l1", 0))
+	var cp := int(st.get(story_key, 0))
 	if cp > 1:
 		var v := _panel("متابعة الرحلة", "وصلتَ سابقاً إلى الجزء %d. هل تتابع من هناك؟" % cp)
 		var go_on := func():
@@ -956,8 +982,12 @@ func _begin_story() -> void:
 		_run_story(1)
 
 func _run_story(start_ch: int) -> void:
-	story = _load_json("res://data/story_level1.json")
-	if start_ch >= 3:
+	if story.is_empty():
+		story = _load_json("res://data/story_level%d.json" % GameState.selected_level)
+	var pm: Dictionary = story.get("portraits", {})
+	for k in pm:
+		portraits[k] = load(str(pm[k]))
+	if start_ch >= 3 and not bool(story.get("spawn_only", false)):
 		_story_restore_discovered()
 	for ch in story.get("chapters", []):
 		if int(ch["id"]) < start_ch:
@@ -983,7 +1013,7 @@ func _do_step(step: Dictionary) -> void:
 	var kind := str(step["t"])
 	if kind == "checkpoint":
 		chapter_title = str(step.get("title", ""))
-		GameState.data["story"] = {"l1": int(step["ch"])}
+		GameState.data["story"] = {story_key: int(step["ch"])}
 		GameState.save_local()
 		_update_hud()
 	elif kind == "card":
@@ -1009,6 +1039,19 @@ func _do_step(step: Dictionary) -> void:
 		_form_nucleus()
 	elif kind == "quiz":
 		await _story_quiz()
+	elif kind == "spawn":
+		var vps := get_viewport_rect().size
+		var names: Array = []
+		for d in step["items"]:
+			var c := Color(str(d.get("tint", "#ffe34d")))
+			var dr := Vector2.ZERO
+			if d.has("drift"):
+				dr = Vector2(float(d["drift"][0]), float(d["drift"][1]))
+			_add_item_dyn(str(d["name"]), Vector2(vps.x * float(d["x"]), vps.y * float(d["y"])), float(d.get("size", 110.0)), Color(c.r, c.g, c.b, 0.4), str(d.get("tex", "res://assets/characters/item.svg")), dr, true)
+			names.append(str(d["name"]))
+		_story_show(names)
+	elif kind == "beat":
+		await _beat(int(step.get("n", 4)))
 	elif kind == "end":
 		_story_end()
 
@@ -1193,6 +1236,7 @@ func _cam_pulse(p: Vector2) -> void:
 
 func _set_env(nm: String) -> void:
 	env = nm
+	world_back.mode = "cell"
 	var vp := get_viewport_rect().size
 	if prok != null and is_instance_valid(prok):
 		prok.queue_free()
@@ -1204,6 +1248,14 @@ func _set_env(nm: String) -> void:
 		else:
 			keep.append(it)
 	items = keep
+	if ENV_TINT.has(nm):
+		world_back.mode = nm
+		world_front.mode = nm
+		bg_node.modulate = ENV_TINT[nm]
+		for it in items:
+			(it["node"] as Node2D).visible = false
+		return
+	world_front.mode = "cell"
 	if nm == "cell":
 		bg_node.modulate = Color.WHITE
 		for it in items:
@@ -1227,19 +1279,22 @@ func _set_env(nm: String) -> void:
 		_add_item_dyn("طية غشاء ٢", c + Vector2(190.0, -70.0), 100.0)
 		_add_item_dyn("طية غشاء ٣", c + Vector2(0.0, 130.0), 100.0)
 
-func _add_item_dyn(nm: String, pos: Vector2, bs: float) -> void:
+func _add_item_dyn(nm: String, pos: Vector2, bs: float, tint := Color(1, 0.9, 0.2, 0.4), tex_path := "res://assets/characters/item.svg", drift := Vector2.ZERO, counts := false) -> void:
 	var n := Node2D.new()
 	n.position = pos
 	n.visible = false
-	var tex: Texture2D = load("res://assets/characters/item.svg")
+	var tex: Texture2D = load(tex_path)
+	var is_orb := tex_path.ends_with("item.svg")
 	var halo := Sprite2D.new()
-	halo.texture = tex
+	halo.texture = load("res://assets/characters/item.svg")
 	halo.scale = Vector2.ONE * ((bs * 1.5) / 128.0)
-	halo.modulate = Color(1, 0.9, 0.2, 0.4)
+	halo.modulate = tint
 	n.add_child(halo)
 	var body := Sprite2D.new()
 	body.texture = tex
 	body.scale = Vector2.ONE * (bs / 128.0)
+	if is_orb:
+		body.modulate = Color(tint.r, tint.g, tint.b, 1.0)
 	n.add_child(body)
 	var l := UI.label(nm, 24)
 	l.size = Vector2(200, 32)
@@ -1250,7 +1305,10 @@ func _add_item_dyn(nm: String, pos: Vector2, bs: float) -> void:
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	n.add_child(l)
 	world.add_child(n)
-	items.append({"node": n, "name": nm, "got": false, "halo": halo, "base": n.position, "fx": null, "r": bs * 0.5, "hs": (bs * 1.5) / 128.0, "dyn": true, "active": false, "label": l})
+	var d := {"node": n, "name": nm, "got": false, "halo": halo, "base": n.position, "fx": null, "r": bs * 0.5, "hs": (bs * 1.5) / 128.0, "dyn": true, "active": false, "label": l, "counts": counts}
+	if drift != Vector2.ZERO:
+		d["drift"] = drift
+	items.append(d)
 
 func _form_nucleus() -> void:
 	if prok != null and is_instance_valid(prok):
@@ -1278,13 +1336,14 @@ func _story_end() -> void:
 	phase = "result"
 	_clear_backdrop()
 	var stars := 1
-	if discovered.size() >= 6:
+	var need := maxi(1, (lv.get("questions", []) as Array).size() - 1)
+	if discovered.size() >= story_goal:
 		stars = 2
-		if qok >= 4:
+		if qok >= need:
 			stars = 3
 	if not story_done:
 		story_done = true
-		GameState.data["story"] = {"l1": 0}
+		GameState.data["story"] = {story_key: 0}
 		GameState.complete_level(GameState.selected_level, stars, score)
 		GameState.sfx("win")
 	_end_panel(stars)
@@ -1295,11 +1354,11 @@ func _end_panel(stars: int) -> void:
 		names.append(str(n))
 	var v := _panel("اكتملت الرحلة!", "النجوم: %d من 3\nالنقاط: %d\nاكتشفتَ: %s" % [stars, score, "، ".join(names)])
 	var replay_all := func():
-		GameState.data["story"] = {"l1": 1}
+		GameState.data["story"] = {story_key: 1}
 		GameState.save_local()
 		GameState.go("res://scenes/level.tscn")
 	var replay_part := func():
-		GameState.data["story"] = {"l1": 2}
+		GameState.data["story"] = {story_key: 2}
 		GameState.save_local()
 		GameState.go("res://scenes/level.tscn")
 	var go_map := func():
@@ -1319,9 +1378,45 @@ func _review_panel(stars: int) -> void:
 	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	col.add_theme_constant_override("separation", 14)
 	sc.add_child(col)
-	var texts: Dictionary = learn.get("1", {})
-	for n in discovered:
-		col.add_child(UI.glow_label("%s: %s" % [n, str(texts.get(n, ""))], 26))
+	var rv: Array = story.get("review", [])
+	if rv.size() > 0:
+		for r in rv:
+			col.add_child(UI.glow_label(str(r), 26))
+	else:
+		var texts: Dictionary = learn.get(str(GameState.selected_level), {})
+		for n in discovered:
+			col.add_child(UI.glow_label("%s: %s" % [n, str(texts.get(n, ""))], 26))
 	v.add_child(sc)
 	var back := func(): _end_panel(stars)
 	v.add_child(UI.button("رجوع", back, Color("#8d99ae")))
+
+# نبضات القلب: وميض أحمر وتقريب خفيف وكلمة «دُم… دَم»
+func _beat(n: int) -> void:
+	phase = "story"
+	var flash := ColorRect.new()
+	flash.color = Color(0.9, 0.1, 0.2, 1.0)
+	flash.set_anchors_preset(Control.PRESET_FULL_RECT)
+	flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	flash.modulate.a = 0.0
+	ui_layer.add_child(flash)
+	var l := UI.glow_label("", 96, Color("#ffb3b3"))
+	l.set_anchors_preset(Control.PRESET_FULL_RECT)
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	l.modulate.a = 0.0
+	ui_layer.add_child(l)
+	for i in n:
+		l.text = "دُم" if i % 2 == 0 else "دَم"
+		l.modulate.a = 1.0
+		flash.modulate.a = 0.28
+		GameState.sfx("tap")
+		var tw := create_tween()
+		tw.tween_property(flash, "modulate:a", 0.0, 0.5)
+		tw.parallel().tween_property(l, "modulate:a", 0.0, 0.6)
+		tw.parallel().tween_property(world, "scale", Vector2(1.04, 1.04), 0.12)
+		tw.parallel().tween_property(world, "position", get_viewport_rect().size / 2.0 * (1.0 - 1.04), 0.12)
+		tw.tween_property(world, "scale", Vector2.ONE, 0.25)
+		tw.parallel().tween_property(world, "position", Vector2.ZERO, 0.25)
+		await get_tree().create_timer(0.75).timeout
+	flash.queue_free()
+	l.queue_free()
