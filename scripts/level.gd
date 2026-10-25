@@ -1,7 +1,7 @@
 extends Control
 # محرك مرحلة عام. عالم اللعب من Node2D/Sprite2D (لا يتأثر باتجاه الواجهة RTL)، والواجهة في CanvasLayer.
 const SPEED := 400.0
-const BUILD := "v13"
+const BUILD := "v14"
 const ENV_TINT := {"artery": Color(1.0, 0.85, 0.55), "heart": Color(1.0, 0.6, 0.6), "capillary": Color(1.0, 0.75, 0.8), "lungs": Color(0.7, 0.9, 1.0)}
 const ITEM_TEX := {
 	"النواة": "res://assets/cell/nucleus.png",
@@ -76,6 +76,9 @@ var backdrop: Control
 var backdrop_hero: TextureRect
 var portraits := {}
 var story_key := "l1"
+var followers: Array = []
+var carry_fx: OrganelleFX
+var cam_tw: Tween
 var story_goal := 6
 var stories := {}
 var items: Array = []
@@ -391,6 +394,7 @@ func _show_intro() -> void:
 # ---------- اللعب ----------
 func _process(delta: float) -> void:
 	t += delta
+	_update_followers(delta)
 	world_back.focus = ppos
 	world_front.focus = ppos
 	point_t = maxf(0.0, point_t - delta)
@@ -986,7 +990,15 @@ func _run_story(start_ch: int) -> void:
 		story = _load_json("res://data/story_level%d.json" % GameState.selected_level)
 	var pm: Dictionary = story.get("portraits", {})
 	for k in pm:
-		portraits[k] = load(str(pm[k]))
+		var pv = pm[k]
+		if pv is Dictionary:
+			var dd := {}
+			for e in pv:
+				dd[e] = load(str(pv[e]))
+			portraits[k] = dd
+		else:
+			portraits[k] = load(str(pv))
+	dlg.colors = story.get("colors", {})
 	if start_ch >= 3 and not bool(story.get("spawn_only", false)):
 		_story_restore_discovered()
 	for ch in story.get("chapters", []):
@@ -1021,7 +1033,7 @@ func _do_step(step: Dictionary) -> void:
 	elif kind == "say":
 		if str(step.get("scene", "")) == "lab":
 			_set_backdrop()
-		await _say_lines(step["lines"])
+		await _say_lines(step["lines"], str(step.get("caption", "")))
 	elif kind == "shrink":
 		await _shrink_cutscene()
 	elif kind == "show":
@@ -1050,16 +1062,25 @@ func _do_step(step: Dictionary) -> void:
 			_add_item_dyn(str(d["name"]), Vector2(vps.x * float(d["x"]), vps.y * float(d["y"])), float(d.get("size", 110.0)), Color(c.r, c.g, c.b, 0.4), str(d.get("tex", "res://assets/characters/item.svg")), dr, true)
 			names.append(str(d["name"]))
 		_story_show(names)
+	elif kind == "follow":
+		_follow(str(step["name"]), str(step["tex"]), float(step.get("size", 150.0)))
+	elif kind == "carry":
+		if carry_fx != null and is_instance_valid(carry_fx):
+			carry_fx.visible = bool(step["on"])
 	elif kind == "beat":
 		await _beat(int(step.get("n", 4)))
 	elif kind == "end":
 		_story_end()
 
-func _say_lines(lines: Array) -> void:
+func _say_lines(lines: Array, caption := "") -> void:
 	phase = "story"
 	pad_dir = Vector2.ZERO
+	if caption != "":
+		_caption(caption, 3.2)
+	_cam_hold(true)
 	dlg.play(lines, portraits)
 	await dlg.finished
+	_cam_hold(false)
 	story_pose = "idle"
 
 func _on_line(line: Dictionary) -> void:
@@ -1420,3 +1441,73 @@ func _beat(n: int) -> void:
 		await get_tree().create_timer(0.75).timeout
 	flash.queue_free()
 	l.queue_free()
+
+# ----- إخراج سينمائي: عنوان المكان، تأطير الكاميرا أثناء الحوار، رفقاء يتبعون اللاعب -----
+func _caption(text: String, secs: float) -> void:
+	var bar := ColorRect.new()
+	bar.color = Color(0, 0, 0, 0.62)
+	bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	bar.offset_top = 0.0
+	bar.offset_bottom = 96.0
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar.modulate.a = 0.0
+	var l := UI.glow_label(text, 28, Color("#ffe9a8"))
+	l.set_anchors_preset(Control.PRESET_FULL_RECT)
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar.add_child(l)
+	ui_layer.add_child(bar)
+	var tw := create_tween()
+	tw.tween_property(bar, "modulate:a", 1.0, 0.4)
+	tw.tween_interval(secs)
+	tw.tween_property(bar, "modulate:a", 0.0, 0.5)
+	tw.tween_callback(bar.queue_free)
+
+func _cam_hold(on: bool) -> void:
+	if cam_tw:
+		cam_tw.kill()
+	cam_tw = create_tween().set_parallel(true)
+	if on:
+		var vp := get_viewport_rect().size
+		var sc := 1.08
+		var target := Vector2(vp.x * 0.5, vp.y * 0.34)   # تبقى الشخصية فوق صندوق الحوار
+		cam_tw.tween_property(world, "scale", Vector2(sc, sc), 0.6).set_trans(Tween.TRANS_SINE)
+		cam_tw.tween_property(world, "position", target - ppos * sc, 0.6).set_trans(Tween.TRANS_SINE)
+	else:
+		cam_tw.tween_property(world, "scale", Vector2.ONE, 0.5)
+		cam_tw.tween_property(world, "position", Vector2.ZERO, 0.5)
+
+func _follow(nm: String, tex_path: String, size: float) -> void:
+	var from := ppos
+	for it in items:
+		if it["name"] == nm:
+			(it["node"] as Node2D).visible = false
+			from = (it["node"] as Node2D).position
+	var g := Sprite2D.new()
+	g.texture = load(tex_path)
+	g.scale = Vector2.ONE * (size / 128.0)
+	g.position = from
+	world.add_child(g)
+	followers.append({"node": g, "off": Vector2(-150.0, 40.0), "k": 4.0, "ph": 0.0})
+	carry_fx = OrganelleFX.new()
+	carry_fx.kind = "carry"
+	carry_fx.r = 64.0
+	g.add_child(carry_fx)
+	for i in 3:
+		var f := Sprite2D.new()
+		f.texture = load("res://assets/characters/rbc.svg")
+		f.scale = Vector2.ONE * (80.0 / 128.0)
+		f.position = from
+		world.add_child(f)
+		followers.append({"node": f, "off": Vector2(-250.0 - float(i) * 70.0, float(i % 2) * 70.0 - 15.0), "k": 2.5 - float(i) * 0.4, "ph": float(i + 1)})
+
+func _update_followers(delta: float) -> void:
+	if followers.is_empty():
+		return
+	var dirx := -1.0 if player.flip_h else 1.0
+	for fo in followers:
+		var n: Sprite2D = fo["node"]
+		var off: Vector2 = fo["off"]
+		var tgt := ppos + Vector2(off.x * dirx, off.y + 8.0 * sin(t * 3.0 + float(fo["ph"])))
+		n.position = n.position.lerp(tgt, 1.0 - exp(-float(fo["k"]) * delta))
+		n.rotation = 0.08 * sin(t * 2.0 + float(fo["ph"]))

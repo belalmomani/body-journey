@@ -5,7 +5,10 @@ signal finished
 signal line_shown(line: Dictionary)
 var lines: Array = []
 var idx := 0
-var portraits := {}
+var portraits := {}      # الاسم -> Texture2D أو {انفعال: Texture2D}
+var colors := {}         # الاسم -> لون اسم المتحدث (hex)
+const DEFAULT_COLORS := {"نبض": "#ffd27f", "رائد": "#7fe3ff"}
+var _t := 0.0
 var name_label: Label
 var text_label: Label
 var portrait: TextureRect
@@ -54,11 +57,31 @@ func _init() -> void:
 		bb.add_theme_font_size_override("font_size", 28)
 		row.add_child(bb)
 
+func _process(delta: float) -> void:
+	_t += delta
+	if not visible:
+		return
+	portrait.pivot_offset = portrait.size / 2.0
+	if _typing:
+		portrait.rotation = 0.05 * sin(_t * 16.0)
+		portrait.scale = Vector2.ONE * (1.0 + 0.03 * sin(_t * 12.0))
+	else:
+		portrait.rotation = lerpf(portrait.rotation, 0.0, 0.2)
+		portrait.scale = portrait.scale.lerp(Vector2.ONE, 0.2)
+
+func _tex(who: String, emote: String) -> Texture2D:
+	var p = portraits.get(who, null)
+	if p is Dictionary:
+		return p.get(emote, p.get("default", null))
+	return p
+
 func play(l: Array, p: Dictionary) -> void:
 	lines = l
 	portraits = p
 	idx = 0
 	visible = true
+	modulate.a = 0.0
+	create_tween().tween_property(self, "modulate:a", 1.0, 0.25)
 	_show()
 
 func _show() -> void:
@@ -66,8 +89,15 @@ func _show() -> void:
 		return
 	var line: Dictionary = lines[idx]
 	var who := str(line.get("who", ""))
+	var last_who := name_label.text
 	name_label.text = who
-	portrait.texture = portraits.get(who, null)
+	var emote := str(line.get("emote", "default"))
+	portrait.texture = _tex(who, emote)
+	var hexc := str(colors.get(who, DEFAULT_COLORS.get(who, "#ffd27f")))
+	name_label.add_theme_color_override("font_color", Color(hexc))
+	if last_who != who:
+		portrait.modulate.a = 0.0
+		create_tween().tween_property(portrait, "modulate:a", 1.0, 0.2)
 	text_label.text = str(line["text"])
 	text_label.visible_characters = 0
 	_typing = true

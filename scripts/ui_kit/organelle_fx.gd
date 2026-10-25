@@ -87,6 +87,12 @@ func _draw() -> void:
 		if formed:
 			draw_circle(Vector2(0.0, 10.0), r * 0.34, Color(0.8, 0.6, 1.0, 0.15))
 			draw_arc(Vector2(0.0, 10.0), r * 0.34, 0.0, TAU, 48, Color(0.8, 0.6, 1.0, 0.9), 6.0, true)
+	elif kind == "carry":
+		for i in 3:
+			var ca := t * 1.6 + float(i) * TAU / 3.0
+			var cp := Vector2(cos(ca), sin(ca) * 0.6) * r * 1.35
+			draw_circle(cp, 9.0, Color(0.85, 0.95, 1.0, 0.9))
+			draw_circle(cp, 15.0, Color(0.85, 0.95, 1.0, 0.25))
 	elif kind == "burst":
 		var q := 1.0 - cel / 0.9
 		for j in 2:
