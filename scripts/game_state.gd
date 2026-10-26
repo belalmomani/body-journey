@@ -2,6 +2,8 @@ extends Node
 # حالة اللعبة، الحفظ المحلي، الصوت، تحميل المراحل.
 signal changed
 const SAVE_PATH := "user://save.json"
+const SAVE_TMP := "user://save.tmp"
+const SAVE_BAK := "user://save.bak"
 const LEVEL_COUNT := 26
 var data := {}
 var levels := {}
@@ -44,11 +46,16 @@ func go(path: String) -> void:
 	get_tree().change_scene_to_file(path)
 
 # ---------- الحفظ المحلي ----------
-func load_local() -> void:
-	var f := FileAccess.open(SAVE_PATH, FileAccess.READ)
+func _read_save(path: String):
+	var f := FileAccess.open(path, FileAccess.READ)
 	if not f:
-		return
-	var j = JSON.parse_string(f.get_as_text())
+		return null
+	return JSON.parse_string(f.get_as_text())
+
+func load_local() -> void:
+	var j = _read_save(SAVE_PATH)
+	if not (j is Dictionary):
+		j = _read_save(SAVE_BAK)   # نسخة احتياطية إن تعذّر قراءة الملف الرئيسي
 	if j is Dictionary:
 		var d := _default()
 		d.merge(j, true)
@@ -57,10 +64,19 @@ func load_local() -> void:
 		if not data["unlocked"].has(1):
 			data["unlocked"].append(1)
 
+# كتابة ذرّية: ملف مؤقت ثم استبدال، مع الاحتفاظ بنسخة احتياطية من آخر حفظ سليم
 func save_local() -> void:
-	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	var f := FileAccess.open(SAVE_TMP, FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify(data))
+		f.close()
+		var main_p := ProjectSettings.globalize_path(SAVE_PATH)
+		var tmp_p := ProjectSettings.globalize_path(SAVE_TMP)
+		if FileAccess.file_exists(SAVE_PATH):
+			DirAccess.copy_absolute(main_p, ProjectSettings.globalize_path(SAVE_BAK))
+		if DirAccess.rename_absolute(tmp_p, main_p) != OK:
+			DirAccess.remove_absolute(main_p)
+			DirAccess.rename_absolute(tmp_p, main_p)
 	changed.emit()
 
 # ---------- التقدم ----------
@@ -86,7 +102,7 @@ func complete_level(id: int, stars: int, score: int) -> void:
 	data["completed"][str(id)] = c
 	if id < LEVEL_COUNT and not data["unlocked"].has(id + 1):
 		data["unlocked"].append(id + 1)
-	data["current_level"] = mini(id + 1, LEVEL_COUNT)
+	data["current_level"] = maxi(int(data["current_level"]), mini(id + 1, LEVEL_COUNT))   # لا يتراجع عند إعادة لعب مرحلة قديمة
 	_recalc()
 	save_local()
 	Cloud.push_async()

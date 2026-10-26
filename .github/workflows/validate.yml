@@ -15,4 +15,6 @@ jobs:
       - name: Import project
         run: godot --headless --path "${{ steps.p.outputs.dir }}" --import || true
       - name: Run tests
-        run: godot --headless --path "${{ steps.p.outputs.dir }}" -s res://tests/run_tests.gd
+        run: |
+          godot --headless --path "${{ steps.p.outputs.dir }}" -s res://tests/run_tests.gd 2>&1 | tee test.log
+          if grep -E "SCRIPT ERROR|Parse Error|FAIL " test.log; then echo "Errors found"; exit 1; fi
