@@ -8,6 +8,7 @@ func _ready() -> void:
 	v.add_child(_slider("sfx"))
 	v.add_child(UI.button("الحساب وإدارة البيانات", func(): GameState.go("res://scenes/account.tscn"), Color("#2a9d8f")))
 	v.add_child(UI.button("سياسة الخصوصية وشروط الاستخدام", func(): GameState.go("res://scenes/privacy.tscn"), Color("#6c63ff")))
+	v.add_child(UI.button("معاينة رائد 3D (تجريبي)", func(): GameState.go("res://scenes/hero3d_preview.tscn"), Color("#43c07a")))
 	UI.back_button(v)
 
 func _slider(key: String) -> HSlider:

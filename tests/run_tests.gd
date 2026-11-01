@@ -10,6 +10,15 @@ func _scripts(dir: String, out: Array) -> void:
 	for sub in d.get_directories():
 		_scripts(dir.path_join(sub), out)
 
+func _find(n: Node, cls: String) -> Node:
+	if n.is_class(cls):
+		return n
+	for c in n.get_children():
+		var r := _find(c, cls)
+		if r != null:
+			return r
+	return null
+
 func _init() -> void:
 	var fails := 0
 	# 1) ترجمة كل السكربتات (يلتقط أخطاء الصياغة والأنواع)
@@ -41,9 +50,29 @@ func _init() -> void:
 			print("FAIL story file: ", sp)
 			fails += 1
 	# 4) المشاهد
-	for s in ["splash", "login", "menu", "map", "level", "settings", "profile", "privacy", "account"]:
+	for s in ["splash", "login", "menu", "map", "level", "settings", "profile", "privacy", "account", "hero3d_preview"]:
 		if load("res://scenes/%s.tscn" % s) == null:
 			print("FAIL scene ", s)
 			fails += 1
+	# 5) استيراد نموذج رائد ثلاثي الأبعاد (تجريبي، غير مرتبط باللعبة بعد)
+	var gp := "res://assets/characters/hero/Raed_Character.glb"
+	if ResourceLoader.exists(gp):
+		var ps = load(gp)
+		if not (ps is PackedScene):
+			print("FAIL 3D import: ", gp)
+			fails += 1
+		else:
+			var inst: Node = (ps as PackedScene).instantiate()
+			var sk := _find(inst, "Skeleton3D") as Skeleton3D
+			var ap := _find(inst, "AnimationPlayer") as AnimationPlayer
+			var mi := _find(inst, "MeshInstance3D") as MeshInstance3D
+			var bones := sk.get_bone_count() if sk else -1
+			var anims := ap.get_animation_list().size() if ap else -1
+			var shapes := (mi.mesh as ArrayMesh).get_blend_shape_count() if (mi and mi.mesh is ArrayMesh) else -1
+			print("INFO 3D: bones=", bones, " animations=", anims, " blendshapes=", shapes)
+			if bones != 19 or anims < 12 or shapes != 6:
+				print("FAIL 3D model structure (expected 19 bones, 12 animations, 6 blendshapes)")
+				fails += 1
+			inst.free()
 	print("RESULT: ", "OK" if fails == 0 else "%d FAILURES" % fails)
 	quit(1 if fails > 0 else 0)
