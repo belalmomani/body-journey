@@ -77,6 +77,7 @@ var backdrop_hero: TextureRect
 var portraits := {}
 var story_key := "l1"
 var followers: Array = []
+var stage3d: Stage3D
 var carry_fx: OrganelleFX
 var cam_tw: Tween
 var story_goal := 6
@@ -315,6 +316,7 @@ func _ready() -> void:
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ui_layer.add_child(overlay)
+	_enable_3d()
 	_update_hud()
 	if story_mode:
 		_begin_story()
@@ -395,6 +397,8 @@ func _show_intro() -> void:
 func _process(delta: float) -> void:
 	t += delta
 	_update_followers(delta)
+	if stage3d != null:
+		stage3d.sync(self, delta)
 	world_back.focus = ppos
 	world_front.focus = ppos
 	point_t = maxf(0.0, point_t - delta)
@@ -936,6 +940,8 @@ func _say_fact(nm: String) -> void:
 	GameState.speak(txt)
 
 func _burst(p: Vector2, r: float) -> void:
+	if stage3d != null:
+		stage3d.burst(p, r)
 	var b := OrganelleFX.new()
 	b.kind = "burst"
 	b.r = r
@@ -1464,6 +1470,8 @@ func _caption(text: String, secs: float) -> void:
 	tw.tween_callback(bar.queue_free)
 
 func _cam_hold(on: bool) -> void:
+	if stage3d != null:
+		stage3d.set_focus(on)
 	if cam_tw:
 		cam_tw.kill()
 	cam_tw = create_tween().set_parallel(true)
@@ -1511,3 +1519,18 @@ func _update_followers(delta: float) -> void:
 		var tgt := ppos + Vector2(off.x * dirx, off.y + 8.0 * sin(t * 3.0 + float(fo["ph"])))
 		n.position = n.position.lerp(tgt, 1.0 - exp(-float(fo["k"]) * delta))
 		n.rotation = 0.08 * sin(t * 2.0 + float(fo["ph"]))
+
+# وضع 3D التجريبي للمرحلة الأولى: يُفعَّل من الإعدادات ويعود تلقائياً إلى 2D إن غاب النموذج
+func _enable_3d() -> void:
+	if GameState.selected_level != 1 or not story_mode:
+		return
+	if not bool(GameState.data["settings"].get("use_3d", false)):
+		return
+	if not ResourceLoader.exists(Hero3D.MODEL):
+		return
+	stage3d = Stage3D.new()
+	add_child(stage3d)
+	move_child(stage3d, 1)
+	stage3d.setup(self)
+	bg_node.visible = false
+	world.visible = false

@@ -8,6 +8,14 @@ func _ready() -> void:
 	v.add_child(_slider("sfx"))
 	v.add_child(UI.button("الحساب وإدارة البيانات", func(): GameState.go("res://scenes/account.tscn"), Color("#2a9d8f")))
 	v.add_child(UI.button("سياسة الخصوصية وشروط الاستخدام", func(): GameState.go("res://scenes/privacy.tscn"), Color("#6c63ff")))
+	var cb := CheckButton.new()
+	cb.text = "وضع 3D للمرحلة الأولى (تجريبي)"
+	cb.add_theme_font_size_override("font_size", 30)
+	cb.button_pressed = bool(GameState.data["settings"].get("use_3d", false))
+	cb.toggled.connect(func(on: bool):
+		GameState.data["settings"]["use_3d"] = on
+		GameState.save_local())
+	v.add_child(cb)
 	v.add_child(UI.button("معاينة رائد 3D (تجريبي)", func(): GameState.go("res://scenes/hero3d_preview.tscn"), Color("#43c07a")))
 	UI.back_button(v)
 

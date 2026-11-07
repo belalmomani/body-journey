@@ -16,7 +16,7 @@ var _music: AudioStreamPlayer
 func _default() -> Dictionary:
 	return {"name": "", "created_at": "", "current_level": 1, "total_stars": 0, "total_score": 0,
 		"unlocked": [1], "completed": {}, "played_sec": 0.0, "last_ad_at": 0.0,
-		"settings": {"music": 0.7, "sfx": 1.0}}
+		"settings": {"music": 0.7, "sfx": 1.0, "use_3d": false}}
 
 func _ready() -> void:
 	data = _default()
