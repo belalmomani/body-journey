@@ -1,0 +1,34 @@
+name: screenshots
+on:
+  workflow_dispatch:
+  push:
+jobs:
+  shots:
+    runs-on: ubuntu-latest
+    container: barichello/godot-ci:4.3
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Locate Godot project
+        id: p
+        run: |
+          f=$(find . -name project.godot -not -path "./.godot/*" | head -1)
+          if [ -z "$f" ]; then echo "project.godot not found"; exit 1; fi
+          echo "dir=$(dirname "$f")" >> "$GITHUB_OUTPUT"
+      - name: Install Xvfb and Mesa (software OpenGL)
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq xvfb libgl1-mesa-dri libglx-mesa0 libegl1 libgles2 || true
+      - name: Import project
+        run: godot --headless --path "${{ steps.p.outputs.dir }}" --import || true
+      - name: Capture screenshots
+        run: |
+          mkdir -p "${{ steps.p.outputs.dir }}/shots"
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 720x1280x24" godot --rendering-driver opengl3 --resolution 720x1280 --path "${{ steps.p.outputs.dir }}" -s res://tests/screenshots.gd 2>&1 | tee shots.log || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: |
+            ${{ steps.p.outputs.dir }}/shots/*.png
+            shots.log
